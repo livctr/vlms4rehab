@@ -1,4 +1,6 @@
-# Computer Vision Foundation Models for Stroke Rehabilitation
+# cvfm4rehab
+
+Applying modern computer vision foundation models to stroke rehabilitation tasks.
 
 ### Set Up
 *Needs pytorch >=2.5.1, torchvision>=0.20.0*
