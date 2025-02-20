@@ -15,6 +15,8 @@ from data.utils_strokerehab import DataPaths
 def filter_metadata(df):
     """Filter out videos with markers on both left and right arms, and videos
     focusing on a stroke patient's unaffected side.
+
+    Don't use this.
     """
 
     def retrieve_handedness(path):
@@ -61,7 +63,50 @@ def filter_metadata(df):
     return df  # 5655 videos
 
 
-def merge_metadata(video_path, label_path, out_path):
+def add_is_in_strokerehab_test_set_col(df):
+    """Reads the lines of `data/metadata/strokerehab_test_set.txt`
+    and adds a column to the dataframe `df` that indicates whether
+    the video is in the stroke rehab test set. Each line may look
+    like this: `S00044_brushing3_1`
+    """
+    df['is_in_strokerehab_test_set'] = False
+    
+    with open('data/metadata/strokerehab_test_set.txt', 'r') as f:
+        test_set_lines = [line.strip() for line in f.readlines()]
+    
+    # Track which test lines matched
+    matched_lines = set()
+    
+    def normalize_str(s):
+        """Replace spaces and underscores with a common character"""
+        # Get basename before extension and normalize
+        base = s.split('/')[-1].split('.')[0]
+        return base.replace(' ', '_').replace('__', '_')
+    
+    def check_path(path):
+        path_normalized = normalize_str(path)
+        for test_str in test_set_lines:
+            test_normalized = normalize_str(test_str)
+            if test_normalized in path_normalized:
+                matched_lines.add(test_str)
+                return True
+        return False
+    
+    df['is_in_strokerehab_test_set'] = df['path_v'].apply(check_path)
+    
+    # Print unmatched lines
+    unmatched = set(test_set_lines) - matched_lines
+    if unmatched:
+        print("Unmatched test set lines:")
+        for line in sorted(unmatched):
+            print(f"  {line}")
+    else:
+        print("All test set lines matched!")
+    
+    return df
+
+
+def merge_metadata(video_path, label_path, out_path, filter_two_handed=False):
 
     # Video metadata
     vdf = pd.read_csv(video_path)
@@ -90,8 +135,12 @@ def merge_metadata(video_path, label_path, out_path):
     df = pd.merge(ldf, vdf, how='left', on='id', suffixes=('_l', '_v'))
 
     # Filter metadata
-    print("Filtering metadata...")
-    df = filter_metadata(df)
+    if filter_two_handed:
+        print("Filtering metadata...")
+        df = filter_metadata(df)
+    
+
+    add_is_in_strokerehab_test_set_col(df)
 
     # Save
     df.to_csv(out_path, index=False)
@@ -108,7 +157,7 @@ if __name__ == "__main__":
     merge_metadata(DataPaths.VIDEO_METADATA_PATH, DataPaths.LABEL_METADATA_PATH, DataPaths.METADATA_PATH)
 
     # Inspection
-    # import pandas as pd
-    # import pdb ; pdb.set_trace()
-    # df = pd.read_csv(DataPaths.METADATA_PATH)
-    # df.head()
+    import pandas as pd
+    df = pd.read_csv(DataPaths.METADATA_PATH)
+    import pdb; pdb.set_trace()
+    df.head()

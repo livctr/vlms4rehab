@@ -10,7 +10,8 @@ if __name__ == "__main__":
 
     df = pd.read_csv(DataPaths.METADATA_PATH)
     np.random.seed(42)
-    sampled_df = df.sample(n=100).reset_index(drop=True)
+    sampled_df = df[df['path_l']=='/gpfs/data/schambralab/quantitativeRehabilitation/__data/rawVideoLabels/S00027/S00027_RTT left side2_1.csv']
+    # sampled_df = df.sample(n=100).reset_index(drop=True)
     # sampled_df.to_csv("/gpfs/data/schambralab/quantitativeRehabilitation/__data/metadata/metadata_video_n_labels.csv")
 
     for i, row in sampled_df.iterrows():

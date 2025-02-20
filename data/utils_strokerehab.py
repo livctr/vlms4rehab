@@ -55,7 +55,10 @@ class DataPaths:
     RAW_VIDEO_DIR = os.path.join(DATA_DIR, "VideoData/rawVideosADLsandFM")
     RAW_LABEL_DIR = os.path.join(DATA_DIR, "rawVideoLabels")
 
+
     METADATA_DIR = os.path.join(DATA_DIR, "metadata")
     METADATA_PATH = os.path.join(METADATA_DIR, "metadata.csv")
+    VIDEO_METADATA_PATH = os.path.join(METADATA_DIR, "video_metadata.csv")
+    LABEL_METADATA_PATH = os.path.join(METADATA_DIR, "label_metadata.csv")
 
     VERIFICATION_PATH = os.path.join(DATA_DIR, "video_n_labels")
