@@ -5,11 +5,18 @@ Applying modern computer vision foundation models to stroke rehabilitation tasks
 ### Set Up
 *Needs pytorch >=2.5.1, torchvision>=0.20.0*
 
-`conda create -n cvfm4rehab python=3.10`
+```python
 
-`conda activate cvfm4rehab`
+conda create -n cvfm4rehab python=3.10
+conda activate cvfm4rehab
 
-`pip install -r requirements.txt`
+pip install -e .
+pip install s2wrapper@git+https://github.com/bfshi/scaling_on_scales  # for VILA
+
+# LLaVA
+cd LLaVA-NeXT ; pip install -e . ; cd ..
+```
+
 
 ### Important Files
 
