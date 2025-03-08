@@ -71,7 +71,7 @@ def add_is_in_strokerehab_test_set_col(df):
     """
     df['is_in_strokerehab_test_set'] = False
     
-    with open('data/metadata/strokerehab_test_set.txt', 'r') as f:
+    with open('data/csvs_and_txts/strokerehab_test_set.txt', 'r') as f:
         test_set_lines = [line.strip() for line in f.readlines()]
     
     # Track which test lines matched
@@ -146,6 +146,35 @@ def merge_metadata(video_path, label_path, out_path, filter_two_handed=False):
     df.to_csv(out_path, index=False)
 
 
+def clean_metadata():
+    df = pd.read_csv(DataPaths.METADATA_PATH)
+    df['duration_s'] = df['tend'] - df['tstart']
+    df.drop(columns=['duration', 'tstart', 'tend', 'codec', 'av_nframes', 'cv2_nframes', 'cv2_nframes_while_loop', 'aligned_nframes'], inplace=True)
+
+    cols = [
+        'id',
+        'is_in_strokerehab_test_set',
+        'path_v',
+        'patient',
+        'stroke',
+        'activity',
+        'fps',
+        'height',
+        'width',
+        'duration_s',
+        'path_l',
+        'nlabels',
+    ]
+    df = df[cols]
+
+    # take the first repetition of each activity
+    subset_df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
+    subset_df = subset_df[cols]
+
+    df.to_csv("./data/csvs_and_txts/cleaned_metadata.csv", index=False)
+    subset_df.to_csv("./data/csvs_and_txts/cleaned_metadata_subset.csv", index=False)
+
+
 if __name__ == "__main__":
 
     # The header for the csvs is either 'Time_s,Time_s (Rounded),MarkerNames' or 'Time_s,MarkerNames'. Always.
@@ -156,8 +185,10 @@ if __name__ == "__main__":
 
     merge_metadata(DataPaths.VIDEO_METADATA_PATH, DataPaths.LABEL_METADATA_PATH, DataPaths.METADATA_PATH)
 
-    # Inspection
-    import pandas as pd
-    df = pd.read_csv(DataPaths.METADATA_PATH)
-    import pdb; pdb.set_trace()
-    df.head()
+    clean_metadata()
+
+    # # Inspection
+    # import pandas as pd
+    # df = pd.read_csv(DataPaths.METADATA_PATH)
+    # import pdb; pdb.set_trace()
+    # df.head()
