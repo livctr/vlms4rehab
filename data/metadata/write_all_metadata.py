@@ -167,12 +167,12 @@ def clean_metadata():
     ]
     df = df[cols]
 
-    # take the first repetition of each activity
-    subset_df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
-    subset_df = subset_df[cols]
+    # # take the first repetition of each activity
+    # subset_df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
+    # subset_df = subset_df[cols]
 
     df.to_csv("./data/csvs_and_txts/cleaned_metadata.csv", index=False)
-    subset_df.to_csv("./data/csvs_and_txts/cleaned_metadata_subset.csv", index=False)
+    # subset_df.to_csv("./data/csvs_and_txts/cleaned_metadata_subset.csv", index=False)
 
 
 if __name__ == "__main__":

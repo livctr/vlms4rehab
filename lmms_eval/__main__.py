@@ -282,12 +282,12 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
         print("└───────────────────────────────────────────────────────────────────────────────┘")
         sys.exit(1)
 
-    if args.wandb_args:
-        if "name" not in args.wandb_args:
-            name = f"{args.model}_{args.model_args}_{utils.get_datetime_str(timezone=args.timezone)}"
-            name = utils.sanitize_long_string(name)
-            args.wandb_args += f",name={name}"
-        wandb_logger = WandbLogger(**simple_parse_args_string(args.wandb_args))
+    # if args.wandb_args:
+    #     if "name" not in args.wandb_args:
+    #         name = f"{args.model}_{args.model_args}_{utils.get_datetime_str(timezone=args.timezone)}"
+    #         name = utils.sanitize_long_string(name)
+    #         args.wandb_args += f",name={name}"
+    #     wandb_logger = WandbLogger(**simple_parse_args_string(args.wandb_args))
 
     # reset logger
     eval_logger.remove()
@@ -324,8 +324,12 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
 
     for args in args_list:
         try:
-            # if is_main_process and args.wandb_args:  # thoughtfully we should only init wandb once, instead of multiple ranks to avoid network traffics and unwanted behaviors.
-            #     wandb_logger = WandbLogger()
+            if is_main_process and args.wandb_args:  # thoughtfully we should only init wandb once, instead of multiple ranks to avoid network traffics and unwanted behaviors.
+                if "name" not in args.wandb_args:
+                    name = f"{args.model}_{args.model_args}_{utils.get_datetime_str(timezone=args.timezone)}"
+                    name = utils.sanitize_long_string(name)
+                    args.wandb_args += f",name={name}"
+                wandb_logger = WandbLogger(**simple_parse_args_string(args.wandb_args))
 
             results, samples = cli_evaluate_single(args)
             results_list.append(results)
@@ -339,7 +343,7 @@ def cli_evaluate(args: Union[argparse.Namespace, None] = None) -> None:
                         wandb_logger.log_eval_samples(samples)
                 except Exception as e:
                     eval_logger.info(f"Logging to Weights and Biases failed due to {e}")
-                # wandb_logger.finish()
+                wandb_logger.run.finish()
 
         except Exception as e:
             if args.verbosity == "DEBUG":
