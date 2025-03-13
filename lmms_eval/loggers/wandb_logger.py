@@ -49,7 +49,7 @@ class WandbLogger:
         else:
             self.run = wandb.run
 
-        self.printer = get_wandb_printer()
+        # self.printer = get_wandb_printer()
 
     def post_init(self, results: Dict[str, Any]) -> None:
         self.results: Dict[str, Any] = copy.deepcopy(results)

@@ -13,8 +13,15 @@ conda activate cvfm4rehab
 pip install -e .
 pip install s2wrapper@git+https://github.com/bfshi/scaling_on_scales  # for VILA
 
+
+pip install deepspeed
+pip install flash-attn --no-build-isolation
+
 # LLaVA
 cd LLaVA-NeXT ; pip install -e . ; cd ..
+
+# Metric
+pip install python-Levenshtein
 ```
 
 

@@ -1,0 +1,7 @@
+- model: nobot
+  # model_args:
+  wandb_args: "entity=cvfm4rehab,project=cvfm4rehab_summary"
+  output_path: "./logs/nobot"
+- model: yesbot
+  wandb_args: "entity=cvfm4rehab,project=cvfm4rehab_summary"
+  output_path: "./logs/yesbot"
