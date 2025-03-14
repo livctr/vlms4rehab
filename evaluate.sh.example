@@ -1,0 +1,16 @@
+export HF_HOME="***REMOVED***"
+export OPENAI_API_KEY=""
+export HF_TOKEN="***REMOVED***"
+
+num_frames=32  # 
+
+
+accelerate launch \
+  --num_processes 1 \
+  -m lmms_eval \
+  --tasks strokerehab \
+  --verbosity DEBUG \
+  --batch_size 1 \
+  --log_samples \
+  --wandb_log_samples \
+  --config ./model_configs.yaml \

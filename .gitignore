@@ -1,7 +1,10 @@
 logs/
+media/
 nbs/
 results/
+visualization/plots
 wandb/
+evaluate.sh
 
 ### Copied from
 ### https://github.com/github/gitignore/blob/main/Python.gitignore
