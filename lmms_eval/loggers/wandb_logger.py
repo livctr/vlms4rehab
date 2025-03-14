@@ -11,15 +11,6 @@ from packaging.version import Version
 from lmms_eval.loggers.utils import _handle_non_serializable, remove_none_pattern
 
 
-def get_wandb_printer() -> Literal["Printer"]:
-    """Returns a wandb printer instance for pretty stdout."""
-    from wandb.sdk.lib.printer import get_printer
-    from wandb.sdk.wandb_settings import Settings
-
-    printer = get_printer(Settings()._jupyter)
-    return printer
-
-
 class WandbLogger:
     def __init__(self, **kwargs) -> None:
         """Attaches to wandb logger if already initialized. Otherwise, passes kwargs to wandb.init()
@@ -48,8 +39,6 @@ class WandbLogger:
             self.run = wandb.init(**self.wandb_args)
         else:
             self.run = wandb.run
-
-        # self.printer = get_wandb_printer()
 
     def post_init(self, results: Dict[str, Any]) -> None:
         self.results: Dict[str, Any] = copy.deepcopy(results)
@@ -134,9 +123,12 @@ class WandbLogger:
                         continue
                     if m == "alias":
                         continue
+                    if type(v) == list and len(v) == 0:
+                        continue
 
-                    if m + "_stderr" + "," + f in dic:
-                        se = dic[m + "_stderr" + "," + f]
+                    key = m + "_stderr" + "," + f
+                    if key in dic and (type(dic[key]) == float or type(dic[key]) == int):
+                        se = dic[key]
                         if se != "N/A":
                             se = "%.4f" % se
                         table.add_data(*[k, version, f, n, m, str(v), str(se)])
