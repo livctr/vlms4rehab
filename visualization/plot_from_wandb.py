@@ -76,7 +76,11 @@ def retrieve_runs_info(wandb_runs_location):
 
     dfs = []
     for run in runs:
-        table_meta = run.summary["strokerehab_eval_results"]
+        try:
+            table_meta = run.summary["sr_summary_score"]
+        except KeyError as e:
+            msg = "The run ran OK. But check the key with the summary (should match the metric name in yaml)"
+            raise KeyError(msg) from e
         table_file = run.file(table_meta["path"])
         local_path = table_file.download(replace=True)
 

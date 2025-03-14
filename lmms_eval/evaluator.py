@@ -455,6 +455,7 @@ def evaluate(
                 cloned_reqs.extend([req] * req.repeats)
 
         # run requests through model
+        # Instance(request_type='generate_until', arguments=('Outline the steps the patient goes through to accomplish their task.', {'max_new_tokens': 60, 'temperature': 0.0, 'top_p': 1.0, 'num_beams': 1, 'do_sample': True, 'until': ['\n\n']}, <bound method ConfigurableTask.doc_to_visual of ConfigurableTask(task_name=strokerehab,output_type=generate_until,num_fewshot=0,num_samples=1)>, 0, 'strokerehab', 'test'), idx=0, metadata={'task': 'strokerehab', 'doc_id': 0, 'repeats': 1, 'split': 'test', 'version': 1.0}, resps=[], filtered_resps={}, task_name='strokerehab', doc_id=0, repeats=1, doc=None)
         resps = getattr(lm, reqtype)(cloned_reqs)  # Choiszt run generate until
 
         # put responses from model into a list of length K for each request.
