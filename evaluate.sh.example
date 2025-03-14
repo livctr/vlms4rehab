@@ -1,18 +1,22 @@
+conda activate cvfm4rehab
+
 export HF_HOME="***REMOVED***"
 export OPENAI_API_KEY=""
 export HF_TOKEN="***REMOVED***"
-
-num_frames=32  # 
 
 
 accelerate launch \
   --num_processes 1 \
   -m lmms_eval \
+  --model llava_vid \
+  --model_args "pretrained=lmms-lab/LLaVA-NeXT-Video-7B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=32" \
   --tasks strokerehab \
   --verbosity DEBUG \
   --batch_size 1 \
   --log_samples \
+  --output_path "./logs/llava_vid" \
+  --wandb_args "entity=cvfm4rehab,project=cvfm4rehab_summary,name=llava_vid" \  # need to give this a name, otherwise errors in parsing
   --wandb_log_samples \
-  --config ./model_configs.yaml \
+  # --config ./model_configs.yaml \
 
 python -m visualization.plot_from_wandb
