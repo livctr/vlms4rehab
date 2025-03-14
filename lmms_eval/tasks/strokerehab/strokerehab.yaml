@@ -15,25 +15,21 @@ generation_kwargs:
   do_sample: true
 process_results: !function utils.sr_summary_process_results
 metric_list:
-  - metric: sr_summary_score
-    aggregation: !function utils.sr_summary_aggregate_results
+  - metric: precision
+    aggregation: mean
     higher_is_better: true
-  # ["precision", "recall", "f1", "ordering_score", "summary_steps_score"]
-  # - metric: precision
-  #   aggregation: !function utils.sr_summary_aggregate_results
-  #   higher_is_better: true
-  # - metric: recall
-  #   aggregation: !function utils.sr_summary_aggregate_results
-  #   higher_is_better: true
-  # - metric: f1
-  #   aggregation: !function utils.sr_summary_aggregate_results
-  #   higher_is_better: true
-  # - metric: ordering_score
-  #   aggregation: !function utils.sr_summary_aggregate_results
-  #   higher_is_better: true
-  # - metric: summary_steps_score
-  #   aggregation: !function utils.sr_summary_aggregate_results
-  #   higher_is_better: true
+  - metric: recall
+    aggregation: mean
+    higher_is_better: true
+  - metric: f1
+    aggregation: mean
+    higher_is_better: true
+  - metric: ordering_score
+    aggregation: mean
+    higher_is_better: true
+  - metric: summary_steps_score
+    aggregation: mean
+    higher_is_better: true
 lmms_eval_specific_kwargs:
   default:
     frame_sampling: "uniform"

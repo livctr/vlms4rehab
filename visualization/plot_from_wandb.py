@@ -79,7 +79,8 @@ def retrieve_runs_info(wandb_runs_location):
         try:
             table_meta = run.summary["sr_summary_score"]
         except KeyError as e:
-            msg = "The run ran OK. But check the key with the summary (should match the metric name in yaml)"
+            msg = "The run ran OK. But check the key with the summary (should match the metric name(s) in yaml)"
+            msg += f"\n\nKeys: {run.summary.keys()}"
             raise KeyError(msg) from e
         table_file = run.file(table_meta["path"])
         local_path = table_file.download(replace=True)
