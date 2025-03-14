@@ -20,9 +20,13 @@ pip install flash-attn --no-build-isolation
 # LLaVA
 cd LLaVA-NeXT ; pip install -e . ; cd ..
 
-# Metric
+# Metric(s)
 pip install python-Levenshtein
 ```
+
+### Reproduce the Results
+
+To reproduce the paper experiments, manually update  `model_configs.yaml` (for logging and model settings), `mv evaluate.sh.example evaluate.sh`, and manually update the `evaluate.sh` bash file. Plots are saved in the `visualization/plots` directory.
 
 
 ### Important Files

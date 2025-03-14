@@ -14,3 +14,5 @@ accelerate launch \
   --log_samples \
   --wandb_log_samples \
   --config ./model_configs.yaml \
+
+python -m visualization.plot_from_wandb
