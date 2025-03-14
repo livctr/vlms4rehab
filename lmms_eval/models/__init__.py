@@ -64,8 +64,7 @@ AVAILABLE_MODELS = {
     "xcomposer2d5": "XComposer2D5",
     "egogpt": "EgoGPT",
 
-    "nobot": "NoBot",
-    "yesbot": "YesBot",
+    "bot": "Bot",
 }
 
 

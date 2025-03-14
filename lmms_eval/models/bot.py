@@ -7,8 +7,8 @@ from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 
-@register_model("nobot")
-class NoBot(lmms):
+@register_model("bot")
+class Bot(lmms):
     """
     Dummy LlavaVid Model that returns dummy values for all functions.
     This class implements the same interface as LlavaVid but does not perform any real computations.
@@ -129,7 +129,7 @@ class NoBot(lmms):
 
     def generate_until(self, requests) -> List[str]:
         # Return a dummy response for each request.
-        return ["wear glasses" for _ in requests]
+        return ["1. fill tub with water 2. wear glasses 3. move target from center to outside" for _ in requests]
 
     def generate_until_multi_round(self, requests) -> List[str]:
         # Return a dummy multi-round response for each request.
