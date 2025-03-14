@@ -78,7 +78,7 @@ def strokerehab_load_dataset(patients='all', activity='all', reps='all', filter_
     dataset_dict = datasets.DatasetDict({'test': dataset})
     return dataset_dict
 
-strokerehab_load_dataset_S0001_glasses = partial(strokerehab_load_dataset, patients='S0001', activity='glasses', )
+strokerehab_load_dataset_S0001 = partial(strokerehab_load_dataset, patients='S0001')
 
 
 def strokerehab_doc_to_visual(doc):
@@ -102,10 +102,12 @@ def strokerehab_process_results(doc, results):
 
     scores = {metric: eval("calculate_" + metric)(pred_sequence, gt_sequence) for metric in METRICS}
 
+    # model?
+
     return {
         "sr_summary_score": {
             **doc,
-            "pred": pred_sequence,
+            "pred": "[" + ",".join(pred_sequence) + "]",
             **scores
         }
     }
