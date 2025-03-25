@@ -10,6 +10,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from lmms_eval.loggers.wandb_logger import WandbLogger
+from lmms_eval.tasks.strokerehab.utils_summarization import SUMMARY_STEPS_METRICS
 
 
 
@@ -76,15 +77,8 @@ def retrieve_runs_info(wandb_runs_location):
 
     dfs = []
     for run in runs:
-        try:
-            table_meta = run.summary["sr_summary_score"]
-        except KeyError as e:
-            msg = "The run ran OK. But check the key with the summary (should match the metric name(s) in yaml)"
-            msg += f"\n\nKeys: {run.summary.keys()}"
-            raise KeyError(msg) from e
-        table_file = run.file(table_meta["path"])
-        local_path = table_file.download(replace=True)
-
+        table_meta = run.summary["strokerehab_eval_results"]["path"]
+        local_path = run.file(table_meta).download(replace=True)
         with open(local_path.name, "r") as f:
             dump = json.load(f)
 
@@ -115,6 +109,8 @@ def generate_activity_radar_plot(df, metric_name='sr_summary_score,action_f1'):
     Returns:
       None (displays the Plotly radar plot).
     """
+    # SUMMARY_STEPS_METRICS
+    import pdb ; pdb.set_trace()
     import plotly.graph_objects as go  # # pip install -U plotly kaleido
 
     df['sr_summary_score,activity'] = df['sr_summary_score,activity'].str.replace(' left side', '', regex=False)

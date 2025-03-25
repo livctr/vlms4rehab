@@ -2,6 +2,11 @@ import os
 import pandas as pd
 
 
+VIDEO_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoData/rawVideosADLsandFM/"
+CHUNKED_VIDEO_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/ProcessedVideoData_1fps"
+LABEL_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/rawVideoLabels/"
+
+
 ##################### Metadata Utilities #####################
 class LabelUtils:
 
@@ -14,38 +19,43 @@ class LabelUtils:
         marker_names = labels['MarkerNames']
         num_lefts = marker_names.str.startswith('l_').sum() + marker_names.str.contains('_l_').sum()
         num_rights = marker_names.str.startswith('r_').sum() + marker_names.str.contains('_r_').sum()
-
-        if num_lefts > 0 and num_rights > 0:
-            raise ValueError(f"Both left and right markers found in {path}.")
-        
-        if num_lefts == 0 and num_rights == 0:
-            raise ValueError(f"No markers with handedness labels found in {path}.")
-        
-        if num_lefts > 0:
-            return "left"
-        return "right"
+        return "left" if num_lefts > num_rights else "right"
 
     @staticmethod
-    def get_df_with_cleaned_labels(path):
-        """Returns the DataFrame at the path with cleaned labels."""
+    def convert_labels_to_action_sequence(path, handedness):
+        """Converts the marker names to a sequence.
+        
+        E.g.
+        Input: ['l_reach', 'l_reach', 'l_transport_prox', 'l_stabilize', 'r_reach']
+            handedness='left
+        Output: ['reach', 'transport', 'stabilize']  # ignore the right reach
+        """
         df = pd.read_csv(path)
+        times = df['Time_s'].tolist()
         actions = df['MarkerNames'].tolist()
-        cleaned_actions = ["" for _ in range(len(actions))]
+        action_seq = []
+
+        def deduped_action_append(action):
+            if len(action_seq) == 0:
+                action_seq.append(action)
+            else:
+                if action[1] != action_seq[-1][1]:
+                    action_seq.append(action)
 
         for i, action in enumerate(actions):
-            if "reach" in action:
-                cleaned_actions[i] = "reach"
-            elif "reposition" in action or "retract" in action:
-                cleaned_actions[i] = "reposition"
-            elif "transport" in action:
-                cleaned_actions[i] = "transport"
-            elif "stabilize" in action:
-                cleaned_actions[i] = "stabilize"
-            elif "idle" in action or "rest" in action:
-                cleaned_actions[i] = "idle"
-
-        df['MarkerNames'] = cleaned_actions
-        return df
+            if (handedness == "left" and (action.startswith('l_') or '_l_' in action)) \
+                or (handedness == "right" and (action.startswith('r_') or '_r_' in action)):
+                if "reach" in action:
+                    deduped_action_append((times[i], "reach"))
+                elif "reposition" in action or "retract" in action:
+                    deduped_action_append((times[i], "reposition"))
+                elif "transport" in action:
+                    deduped_action_append((times[i], "transport"))
+                elif "stabilize" in action:
+                    deduped_action_append((times[i], "stabilize"))
+                elif "idle" in action or "rest" in action:
+                    deduped_action_append((times[i], "idle"))
+        return action_seq
 
 
 ##################### Path and File Utilities #####################
