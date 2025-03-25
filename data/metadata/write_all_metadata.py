@@ -134,12 +134,18 @@ def merge_metadata(video_path, label_path, out_path, filter_two_handed=False):
     # Merge metadata
     df = pd.merge(ldf, vdf, how='left', on='id', suffixes=('_l', '_v'))
 
+    def get_folder_file(path):
+        folder, file = extract_folder_file_from_path(path)
+        return folder + '/' + file
+
+    df['path_v'] = df['path_v'].apply(get_folder_file)
+    df['path_l'] = df['path_l'].apply(get_folder_file)
+
     # Filter metadata
     if filter_two_handed:
         print("Filtering metadata...")
         df = filter_metadata(df)
     
-
     add_is_in_strokerehab_test_set_col(df)
 
     # Save
