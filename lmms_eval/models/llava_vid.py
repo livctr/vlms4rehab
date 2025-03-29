@@ -277,7 +277,7 @@ class LlavaVid(lmms):
             start = 0
             while start + (max_frames_num - 1) * sampling_rate < total_frame_num:
                 indices = start + np.arange(max_frames_num) * sampling_rate
-                eval_logger.info(f"Yielding frames [{indices[0]}, {indices[-1]}] of total {total_frame_num} frames")
+                eval_logger.info(f"Yielding {len(indices)} frames [{indices[0]}, {indices[-1]}] of total {total_frame_num} frames")
                 yield vr.get_batch(indices).asnumpy()
                 start += step
         else:
@@ -401,7 +401,7 @@ class LlavaVid(lmms):
 
             eval_logger.debug(f"Question: {cur_prompt}")
             outputs_print = "\n".join(outputs)
-            eval_logger.debug(f"Answer: {outputs_print}")
+            eval_logger.debug(f"Prediction: {outputs_print}")
             res.append(outputs)
             pbar.update(1)
         return res

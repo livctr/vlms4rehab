@@ -6,14 +6,13 @@ from openai import OpenAI
 import re
 import yaml
 
-from data.utils_strokerehab import VIDEO_DIR
+from data.utils_strokerehab import VIDEO_DIR, ACTIVITY_GROUND_TRUTH_PATH
 
 
 # Evaluation metrics
 SUMMARY_STEPS_METRICS = ["precision", "recall", "f1", "ordering_score", "summary_steps_score"]
 
 # Ground truth of the activity
-ACTIVITY_GROUND_TRUTH_PATH = "./data/csvs_txts_yamls/activities_ground_truth.yaml"
 try:
     with open(ACTIVITY_GROUND_TRUTH_PATH, "r") as file:
         agt = yaml.safe_load(file)
