@@ -220,6 +220,9 @@ class WandbLogger:
             resps = [x["resps"][0][0] for x in data]
             filtered_resps = [x["filtered_resps"][0] for x in data]
 
+        if isinstance(resps[0], list):
+            resps = [str(x) for x in resps]
+
         model_outputs["raw_predictions"] = resps
         model_outputs["filtered_predictions"] = filtered_resps
 
