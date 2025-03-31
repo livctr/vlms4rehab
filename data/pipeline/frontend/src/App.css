@@ -1,26 +1,74 @@
+/* Container and overall UI styling */
 .container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 50px;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 20px;
+  font-family: 'Helvetica Neue', Arial, sans-serif;
+  background-color: #f5f5f5;
 }
 
-.image-container {
-  position: relative;
-  display: inline-block;
+/* Annotation UI card styling */
+.annotation-ui {
+  background-color: #fff;
+  border-radius: 8px;
+  padding: 30px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+/* Title styling */
+.annotation-ui h5 {
+  text-align: center;
+}
+.annotation-ui h1 {
+  font-size: 24px;
+  margin-bottom: 20px;
+  color: #333;
+  text-align: center;
+}
+
+/* Top buttons styling */
+.top-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
   margin-bottom: 20px;
 }
 
-.bounding-box {
+.top-buttons button {
+  background-color: #007bff;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 10px 15px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.3s ease;
+}
+
+.top-buttons button:hover {
+  background-color: #0056b3;
+  transform: translateY(-2px);
+}
+
+/* Image container styling */
+.image-container {
+  position: relative;
+  text-align: center;
+}
+
+.image-container img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* Bounding box styling */
+.image-container div {
   position: absolute;
-  pointer-events: auto;
+  border: 1px solid red;
+  box-sizing: border-box;
+  cursor: pointer;
 }
 
-.bounding-box.selected {
-  border: 2px solid green;
-}
-
-.done-button {
-  padding: 10px 20px;
-  font-size: 16px;
+.image-container div:hover {
+  border-width: 2px;
 }
