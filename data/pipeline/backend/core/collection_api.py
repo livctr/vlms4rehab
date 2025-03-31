@@ -5,20 +5,20 @@ from PIL import Image
 
 import numpy as np
 
-from data.pipeline.backend.core.hand_predictor import HandPredictor
+from tqdm import tqdm
+
+from data.pipeline.backend.core.hand_predictor import HandPredictor, HandDetectionError, PatientDetectionError
 from data.pipeline.backend.core.human_input_data_manager import HumanInputDataManager
 
 class CollectionAPI:
     def __init__(self,
                  hand_predictor: HandPredictor,
-                 data_manager: HumanInputDataManager,
-                 try_automation_first: bool = True):
+                 data_manager: HumanInputDataManager):
         """
         Initialize the CollectionAPI with data manager and hand predictor.
         """
         self.hand_predictor = hand_predictor
         self.data_manager = data_manager
-        self.try_automation_first = try_automation_first
     
     def get_data(self, position: str) -> Dict[str, Any]:
         """
@@ -63,3 +63,44 @@ class CollectionAPI:
     def save(self):
         self.data_manager.save()
         return {"success": True}
+
+
+class AutoAPI:
+    def __init__(self,
+                 hand_predictor: HandPredictor,
+                 data_manager: HumanInputDataManager,
+                 ):
+        """
+        Initialize the CollectionAPI with data manager and hand predictor.
+        """
+        self.hand_predictor = hand_predictor
+        self.data_manager = data_manager
+        self.num_success = 0
+
+    def run(self):
+        data = self.data_manager.current()
+        total_frames = data['num_frames_needed']
+        for _ in tqdm(range(total_frames)):
+            self.predict(data)
+            data = self.data_manager.next()
+        self.data_manager.save()
+        print(f"{self.num_success} frames successfully annotated out of {total_frames} total frames.")
+
+    def predict(self, data):
+
+        path_v = data["path_v"]
+        frame_idx = data["frame_idx"]
+        frame = data["frame"]
+
+        try:
+            result = self.hand_predictor.auto_detect_patient_and_hands(
+                frame,
+                hand=data['handedness']
+            )
+            self.data_manager.annotate_cur(path_v, frame_idx, result)
+            self.num_success += 1
+            print(f"Auto detection successful for {path_v}, frame {frame_idx}")
+        except HandDetectionError as e:
+            print(f"Hand detection error for {path_v}, frame {frame_idx}: {e}")
+        except PatientDetectionError as e:
+            print(f"Patient detection error for {path_v}, frame {frame_idx}: {e}")

@@ -318,7 +318,7 @@ class HandPredictor:
         Returns:
             dict: A dictionary containing:
                 - 'patient_bbox': [x1, y1, x2, y2] list of the patient bounding box
-                - 'patient_kpts': (17, 3) lits of lists of COCO keypoints for the patient
+                # - 'patient_kpts': (17, 3) lits of lists of COCO keypoints for the patient
                 - 'left_hand': Bounding box for left hand, or None if not detected
                 - 'right_hand': Bounding box for right hand, or None if not detected
         Raises:
@@ -336,11 +336,12 @@ class HandPredictor:
         assert hand in [None, "left", "right"], f"hand must be None, 'left', or 'right', not {hand}"
         result = {}
 
-        patient_bbox = self._detect_patient(image)
+        patient_bboxes = self._detect_patients(image)
+        if len(patient_bboxes) != 1:  # ambiguous patient
+            raise PatientDetectionError(f"{len(patient_bboxes)} patients detected in image")
+        patient_bbox = patient_bboxes[0]
         hand_bboxes = self._detect_hands(image, patient_bbox=patient_bbox)
 
-        if len(patient_bbox) != 1:  # ambiguous patient
-            raise PatientDetectionError(f"{len(patient_bbox)} patients detected in image")
         if len(hand_bboxes) == 0:  # no hands
             raise HandDetectionError("No hands detected in image")
 
@@ -354,7 +355,7 @@ class HandPredictor:
         if kpts.shape[0] == 0:
             raise PatientDetectionError("No patients detected by pose model")
         patient_kpts = kpts[0]
-        result['patient_kpts'] = patient_kpts.tolist()
+        # result['patient_kpts'] = patient_kpts.tolist()
 
         # Verify that the pose is inside the patient bounding box
         num_inside = sum([

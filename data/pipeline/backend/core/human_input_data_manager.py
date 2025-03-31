@@ -42,7 +42,7 @@ class HumanInputDataManager:
         # create a backup of the human input
         os.makedirs(os.path.dirname(HUMAN_INPUT_JSON_PATH_BACKUP), exist_ok=True)
         with open(HUMAN_INPUT_JSON_PATH_BACKUP, 'w') as f:
-            json.dump(self.data, f)
+            json.dump(self.data, f, indent=4)
 
         self.annotation_frequency_s = annotation_frequency_s
         self.sampling_fps = sampling_fps
@@ -144,7 +144,7 @@ class HumanInputDataManager:
         while self.cur_idx in self.frames_annotated:
             self.cur_idx = (self.cur_idx - 1) % len(self.frames_needed)
         return self.current()
-    
+
     def annotate_cur(self, path_v, frame_idx, result):
         if path_v not in self.data:
             self.data[path_v] = {}
@@ -154,4 +154,4 @@ class HumanInputDataManager:
     def save(self):
         os.makedirs(os.path.dirname(HUMAN_INPUT_JSON_PATH), exist_ok=True)
         with open(HUMAN_INPUT_JSON_PATH, 'w') as f:
-            json.dump(self.data, f)
+            json.dump(self.data, f, indent=4)

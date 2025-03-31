@@ -6,7 +6,8 @@ visualization/plots
 wandb/
 evaluate.sh
 *.pt
-*ui_setup.sbatch
+data_collection_ui.sbatch
+data_collection_auto.sbatch
 
 # For data pipeline
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
