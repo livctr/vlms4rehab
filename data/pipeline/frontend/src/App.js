@@ -174,7 +174,14 @@ function App() {
             <p>Bounding boxes:</p>
             <ul>
               {data.hand_bboxes && data.hand_bboxes.map((bbox, index) => (
-                <li key={index} style={{ color: selectedBoxIdx === index ? 'red' : 'black' }}>
+                <li 
+                  key={index} 
+                  style={{ 
+                    color: selectedBoxIdx === index ? 'red' : 'black',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => handleBoxClick(index)}
+                >
                   Box {index + 1}: [{bbox[0]}, {bbox[1]}, {bbox[2]}, {bbox[3]}]
                 </li>
               ))}

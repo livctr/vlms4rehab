@@ -302,12 +302,6 @@ class HandPredictor:
             hand_bboxes = self._filter_hand_bboxes(hand_bboxes, patient_bbox)
         return hand_bboxes
 
-    def _check_auto_detect_result(self, result, hand = None):
-        if hand == "left" and result["left_hand"] is None:
-            raise HandDetectionError("Left hand not detected")
-        if hand == "right" and result["right_hand"] is None:
-            raise HandDetectionError("Right hand not detected")
-
     def auto_detect_patient_and_hands(self, image, hand = None):
         """
         Find the left and right hands of a patient in an image using pose estimation.
@@ -350,11 +344,21 @@ class HandPredictor:
 
         pose_results = self.pose_model(image, verbose=False)
         kpts = pose_results[0].keypoints.data.cpu().numpy()  # 0 index for one image
-        if kpts.shape[0] > 1:
-            raise PatientDetectionError("Multiple patients detected by pose model")
         if kpts.shape[0] == 0:
             raise PatientDetectionError("No patients detected by pose model")
-        patient_kpts = kpts[0]
+        elif kpts.shape[1] == 1:
+            patient_kpts = kpts[0]
+        else:
+            # Find the patient most inside the patient bbox
+            num_insides = [
+                sum([
+                    distance_to_box(kpt[:2], patient_bbox) == 0 for kpt in kpts[i]
+                ])
+                for i in range(kpts.shape[0])
+            ]
+            # Get the index of the patient with the most keypoints inside the bbox
+            patient_idx = np.argmax(num_insides)
+            patient_kpts = kpts[patient_idx]
         # result['patient_kpts'] = patient_kpts.tolist()
 
         # Verify that the pose is inside the patient bounding box
@@ -383,7 +387,6 @@ class HandPredictor:
                 result["left_hand"] = hand_bboxes[0]
             else:
                 result["right_hand"] = hand_bboxes[0]
-            self._check_auto_detect_result(result, hand=hand)
             return result
         
         # If 2+ hand boxes, assign left/right wrist keypoints to nearest bbox
@@ -418,7 +421,6 @@ class HandPredictor:
         # verbose setting to show these can be None!
         result["left_hand"] = left_hand_box if left_hand_box is not None else None
         result["right_hand"] = right_hand_box if right_hand_box is not None else None
-        self._check_auto_detect_result(result, hand=hand)
         return result
 
     def detect_hands(self, image):
@@ -438,7 +440,7 @@ class HandPredictor:
         - hand (str): 'left' or 'right'
         """
         assert hand in ["left", "right"], f"hand must be 'left' or 'right', not {hand}"
-        result = {}
+        # result = {}
 
         for key in ["patient_bboxes", "hand_bboxes", "selected_hand_bbox_idx"]:
             if key not in human_input:
@@ -449,7 +451,7 @@ class HandPredictor:
             selected_idx < len(human_input["hand_bboxes"]), \
             f"selected_hand_bbox_idx must be -1 or in range of hand_bboxes, not {human_input['selected_hand_bbox_idx']}"
 
-        patient_bbox = None
+        # patient_bbox = None
         left_hand_bbox = None
         right_hand_bbox = None
 

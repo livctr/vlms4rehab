@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from data.pipeline.backend.core.hand_predictor import HandPredictor
-from data.pipeline.backend.core.human_input_data_manager import HumanInputDataManager
+from data.pipeline.backend.core.data_manager import DataManager
 from data.pipeline.backend.core.collection_api import CollectionAPI
 
 import base64
@@ -10,6 +10,7 @@ import numpy as np
 from flask import Flask, request, jsonify, send_file, render_template
 from flask_cors import CORS
 from PIL import Image
+
 
 app = Flask(__name__)
 CORS(app)
@@ -98,7 +99,7 @@ if __name__ == '__main__':
         coco_kpts_threshold=args.coco_kpts_threshold,
         device=args.device
     )
-    human_input_data_manager = HumanInputDataManager(
+    human_input_data_manager = DataManager(
         annotation_frequency_s=args.annotation_frequency,
         sampling_fps=args.sampling_fps
     )
