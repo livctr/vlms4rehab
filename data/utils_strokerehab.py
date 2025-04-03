@@ -10,7 +10,6 @@ LABEL_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/rawVideoLa
 ACTIVITY_GROUND_TRUTH_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/cvfm4rehab/data/public/activities_ground_truth.yaml"
 METADATA_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/cvfm4rehab/data/public/cleaned_metadata.csv"
 HUMAN_INPUT_JSON_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoDataSam2Input/human_input.json"
-HUMAN_INPUT_JSON_PATH_BACKUP = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoDataSam2Input/human_input_backup.json"
 
 HEALTHY_PATIENTS = (
     "C00011,C00012,C00015,C00019,C00020,C00022,C00023,C00024,C00025,C00026,"

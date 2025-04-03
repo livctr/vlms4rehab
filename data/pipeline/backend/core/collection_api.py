@@ -2,18 +2,19 @@ from typing import Dict, Any, Optional, Tuple
 import base64
 import io
 from PIL import Image
+import logging
 
 import numpy as np
 
 from tqdm import tqdm
 
 from data.pipeline.backend.core.hand_predictor import HandPredictor, HandDetectionError, PatientDetectionError
-from data.pipeline.backend.core.human_input_data_manager import HumanInputDataManager
+from data.pipeline.backend.core.data_manager import DataManager
 
 class CollectionAPI:
     def __init__(self,
                  hand_predictor: HandPredictor,
-                 data_manager: HumanInputDataManager):
+                 data_manager: DataManager):
         """
         Initialize the CollectionAPI with data manager and hand predictor.
         """
@@ -32,13 +33,22 @@ class CollectionAPI:
         """
         # Get the image and its associated data
         if position == "previous":
-            data = self.data_manager.prev()
-        elif position == "current":
+            self.data_manager.prev()
             data = self.data_manager.current()
         elif position == "next":
-            data = self.data_manager.next()
+            self.data_manager.next()
+            data = self.data_manager.current()
+        elif position == "current":
+            data = self.data_manager.current()
         else:
             raise ValueError(f"Invalid position: {position}")
+    
+        frame = data.get("frame")  # "frame" always in dictionary, but may be None
+        if frame is None:
+            # Mark that the frame has no info available
+            self.data_manager.annotate_cur(data["path_v"],
+                                           data["frame_idx"],
+                                           {})
 
         # Get hand detection data
         hands_data = self.hand_predictor.detect_hands(data['frame'])
@@ -55,9 +65,9 @@ class CollectionAPI:
             human_input=human_input,
             hand=human_input["handedness"]
         )
-        self.data_manager.annotate_cur(human_input["path_v"],
-                                       human_input["frame_idx"],
-                                       result)
+        self.data_manager.annotate_cur(result,
+                                       human_input["path_v"],
+                                       human_input["frame_idx"])
         return {"success": True}
     
     def save(self):
@@ -68,7 +78,7 @@ class CollectionAPI:
 class AutoAPI:
     def __init__(self,
                  hand_predictor: HandPredictor,
-                 data_manager: HumanInputDataManager,
+                 data_manager: DataManager,
                  ):
         """
         Initialize the CollectionAPI with data manager and hand predictor.
@@ -76,21 +86,39 @@ class AutoAPI:
         self.hand_predictor = hand_predictor
         self.data_manager = data_manager
         self.num_success = 0
+        
+        # Configure logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            force=True
+        )
+        self.logger = logging.getLogger(__name__)
 
     def run(self):
-        data = self.data_manager.current()
-        total_frames = data['num_frames_needed']
-        for _ in tqdm(range(total_frames)):
+        tf = self.data_manager.total_frames_needed
+        self.logger.info(f"Starting auto annotation for {tf} frames.")
+        for i in tqdm(range(tf), desc="Auto annotation progress", unit="frame"):
+            data = self.data_manager.current()
             self.predict(data)
-            data = self.data_manager.next()
+            self.data_manager.next()
+
+            if i % 100 == 0:
+                self.data_manager.save()
+
         self.data_manager.save()
-        print(f"{self.num_success} frames successfully annotated out of {total_frames} total frames.")
+        self.logger.info(f"{self.num_success} frames successfully annotated out of {tf} total frames.")
 
     def predict(self, data):
-
         path_v = data["path_v"]
         frame_idx = data["frame_idx"]
         frame = data["frame"]
+        if frame is None:
+            self.logger.info(f"Frame not found for {path_v}, frame {frame_idx}. "
+                             "Setting data to empty dictionary.")
+            self.data_manager.annotate_cur(path_v, frame_idx, {})
+            self.num_success += 1
+            return
 
         try:
             result = self.hand_predictor.auto_detect_patient_and_hands(
@@ -99,8 +127,10 @@ class AutoAPI:
             )
             self.data_manager.annotate_cur(path_v, frame_idx, result)
             self.num_success += 1
-            print(f"Auto detection successful for {path_v}, frame {frame_idx}")
+            self.logger.info(f"Auto detection successful for {path_v}, frame {frame_idx}")
         except HandDetectionError as e:
-            print(f"Hand detection error for {path_v}, frame {frame_idx}: {e}")
+            self.logger.info(f"Hand detection error for {path_v}, frame {frame_idx}: {e}")
         except PatientDetectionError as e:
-            print(f"Patient detection error for {path_v}, frame {frame_idx}: {e}")
+            self.logger.info(f"Patient detection error for {path_v}, frame {frame_idx}: {e}")
+        except Exception as e:
+            self.logger.error(f"Unexpected error for {path_v}, frame {frame_idx}: {e}")
