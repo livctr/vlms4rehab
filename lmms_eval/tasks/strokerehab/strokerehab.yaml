@@ -1,37 +1,31 @@
-# Load StrokeRehab dataset from local
+dataset_path: "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/naveen/test_data"
 dataset_kwargs:
-  use_dataset_builder: !function utils.strokerehab_load_dataset_S0001
-task: "strokerehab"
+  use_dataset_builder: !function utils.build_breakfast_dataset
+  data_dir: "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/naveen/test_data"
+task: "breakfast"
 test_split: test
+fewshot_config:
+  sampler: first_n
 output_type: generate_until
-doc_to_visual: !function utils.sr_summary_doc_to_visual
-doc_to_text: !function utils.sr_summary_doc_to_text
-doc_to_target: !function utils.sr_summary_doc_to_target
+doc_to_visual: !function utils.breakfast_doc_to_visual
+doc_to_text: !function utils.breakfast_doc_to_text
+doc_to_target: "ground_truth"
 generation_kwargs:
-  max_new_tokens: 60  # Can be increase
-  temperature: 0
-  top_p: 1.0
+  max_new_tokens: 2000  # Can be increased
+  temperature: 0.2
+  top_p: 0.5
   num_beams: 1
   do_sample: true
-process_results: !function utils.sr_summary_process_results
+process_results: !function utils.breakfast_process_results
 metric_list:
-  - metric: precision
-    aggregation: mean
-    higher_is_better: true
-  - metric: recall
-    aggregation: mean
-    higher_is_better: true
-  - metric: f1
-    aggregation: mean
-    higher_is_better: true
-  - metric: ordering_score
-    aggregation: mean
-    higher_is_better: true
-  - metric: summary_steps_score
-    aggregation: mean
+  - metric: breakfast_score
+    aggregation: !function utils.breakfast_aggregate_results
     higher_is_better: true
 lmms_eval_specific_kwargs:
   default:
     frame_sampling: "uniform"
 metadata:
   version: 1.0
+  annotation_format: "sequential_actions"
+  video_resolution: "QVGA (320x240)"
+  fps: 15
