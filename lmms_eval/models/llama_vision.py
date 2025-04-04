@@ -56,6 +56,17 @@ class LlamaVision(lmms):
         self._model = MllamaForConditionalGeneration.from_pretrained(pretrained, revision=revision, torch_dtype=dtype, device_map=self.device_map, trust_remote_code=trust_remote_code, attn_implementation=attn_implementation)
         self.model.eval()
         self.processor = AutoProcessor.from_pretrained(pretrained)
+        self.processor.chat_template = (
+            "{% for message in messages %}"
+            "{% if message['role'] == 'user' %}"
+            "<|user|>\n{{ message['content'] }}<|end|>\n"
+            "{% elif message['role'] == 'assistant' %}"
+            "<|assistant|>\n{{ message['content'] }}<|end|>\n"
+            "{% endif %}"
+            "{% endfor %}"
+            "<|assistant|>\n"
+        )
+
         if accelerator.num_processes > 1 and device_map == "":
             assert accelerator.distributed_type in [DistributedType.FSDP, DistributedType.MULTI_GPU, DistributedType.DEEPSPEED], "Unsupported distributed type provided. Only DDP and FSDP are supported."
             # If you want to use DistributedType.DEEPSPEED, you have to run accelerate config before using the model
@@ -184,8 +195,9 @@ class LlamaVision(lmms):
                     images.append(visual)
 
             for _ in range(len(images)):
-                messages[-1]["content"].append({"type": "image"})
+                messages[-1]["content"].append({"type": "text", "text": DEFAULT_IMAGE_TOKEN})
             messages[-1]["content"].append({"type": "text", "text": contexts})
+
             prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True)
             inputs = self.processor(images, prompt, add_special_tokens=False, return_tensors="pt").to(self.model.device)
 

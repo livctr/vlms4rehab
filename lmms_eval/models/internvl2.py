@@ -172,12 +172,12 @@ def split_model(model_name, num_layers=None):
 class InternVL2(lmms):
     def __init__(
         self,
-        pretrained: str = "OpenGVLab/InternVL2-2B",
-        modality: str = "image",
-        device: str = "cuda:0",
-        device_map: str = "cuda:0",
+        pretrained: str = "OpenGVLab/InternVL2_5-26B",
+        modality: str = "video",
+        device: str = "cuda",
+        device_map: str = "cuda",
         batch_size: str = "1",
-        num_frame: int = 32,
+        num_frame: int = 30,
         num_layers=None,
         **kwargs,
     ):
