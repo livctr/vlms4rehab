@@ -13,6 +13,7 @@ from transformers import (
     AutoProcessor,
     LlavaForConditionalGeneration,
     LlavaNextForConditionalGeneration,
+    LlavaNextVideoForConditionalGeneration
 )
 
 from lmms_eval import utils
@@ -33,6 +34,7 @@ VICUNA_CHAT_TEMPLATE = "{% for message in messages %}{% if loop.index0 == 0 %}A 
 model_map = {
     "llava": LlavaForConditionalGeneration,
     "llava_next": LlavaNextForConditionalGeneration,
+    "llava_next_video": LlavaNextVideoForConditionalGeneration,
 }
 
 try:
@@ -70,10 +72,10 @@ class LlavaHf(lmms):
         batch_size: int = 1,
         trust_remote_code: Optional[bool] = False,
         attn_implementation: Optional[str] = None,
-        device_map: str = "",
+        device_map: str = "cuda",
         chat_template: Optional[str] = None,
         use_cache: bool = True,
-        max_frames_num: Optional[int] = 32,
+        max_frames_num: Optional[int] = 20,
         **kwargs,
     ) -> None:
         super().__init__()

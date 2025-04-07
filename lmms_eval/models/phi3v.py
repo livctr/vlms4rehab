@@ -49,7 +49,22 @@ class Phi3v(lmms):
         else:
             self._device = device
         # Load model.
-        self._model = AutoModelForCausalLM.from_pretrained(model_id_name, device_map=device, trust_remote_code=trust_remote_code, torch_dtype=dtype)
+
+        from transformers import AutoConfig
+
+        config = AutoConfig.from_pretrained(model_id_name, trust_remote_code=trust_remote_code)
+        config._attn_implementation = "eager"
+
+        # Loading the model using the modified config
+        self._model = AutoModelForCausalLM.from_pretrained(
+            model_id_name,
+            config=config,
+            device_map=device,
+            trust_remote_code=trust_remote_code,
+            torch_dtype=dtype
+        )
+
+        #self._model = AutoModelForCausalLM.from_pretrained(model_id_name, device_map=device, trust_remote_code=trust_remote_code, torch_dtype=dtype)
         self._processor = AutoProcessor.from_pretrained(model_id_name, trust_remote_code=trust_remote_code)
         self._processor.tokenizer.padding_side = "left"
         self._tokenizer = self._processor.tokenizer
@@ -150,8 +165,17 @@ class Phi3v(lmms):
             contexts, all_gen_kwargs, doc_to_visual, doc_id, task, split = zip(*chunk)
             task = task[0]
             split = split[0]
+
             visuals = [doc_to_visual[0](self.task_dict[task][split][ids]) for ids in doc_id]
             visuals = self.flatten(visuals)
+
+            
+            print("Visuals types:", [type(v) for v in visuals])
+            print("Viz Type: ", type(visuals))
+
+
+
+
             # We assume all gen kwargs in the batch are the same
             # this is safe to assume because the `grouper` object ensures it.
             gen_kwargs = all_gen_kwargs[0]
