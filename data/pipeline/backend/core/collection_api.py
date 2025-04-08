@@ -46,9 +46,7 @@ class CollectionAPI:
         frame = data.get("frame")  # "frame" always in dictionary, but may be None
         if frame is None:
             # Mark that the frame has no info available
-            self.data_manager.annotate_cur(data["path_v"],
-                                           data["frame_idx"],
-                                           {})
+            self.data_manager.annotate_cur({}, data["path_v"], data["frame_idx"])
 
         # Get hand detection data
         hands_data = self.hand_predictor.detect_hands(data['frame'])
@@ -116,7 +114,7 @@ class AutoAPI:
         if frame is None:
             self.logger.info(f"Frame not found for {path_v}, frame {frame_idx}. "
                              "Setting data to empty dictionary.")
-            self.data_manager.annotate_cur(path_v, frame_idx, {})
+            self.data_manager.annotate_cur({}, path_v, frame_idx)
             self.num_success += 1
             return
 
@@ -125,7 +123,7 @@ class AutoAPI:
                 frame,
                 hand=data['handedness']
             )
-            self.data_manager.annotate_cur(path_v, frame_idx, result)
+            self.data_manager.annotate_cur(result, path_v, frame_idx)
             self.num_success += 1
             self.logger.info(f"Auto detection successful for {path_v}, frame {frame_idx}")
         except HandDetectionError as e:

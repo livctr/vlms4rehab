@@ -21,15 +21,19 @@ class DataManager:
     containing the frame annotations.
     """
     def __init__(self, storage_path: str = HUMAN_INPUT_JSON_PATH,
-                 annotation_frequency_s: float = 10000,
-                 sampling_fps: int = 8):
+                 annotation_frequency_s: float = 5,
+                 sampling_fps: int = 8,
+                 kwargs=None):
         """
         `annotation_frequency_s` is the frequency of annotation in seconds.
         """
 
         # hardcode the dataset as the one in strokerehab dataset
         # has `path_v` for video path and `duration_s` for video duration, `fps` for video fps
-        self.dataset = strokerehab_load_dataset(filter_for_testset=True)
+        if kwargs is None:
+            self.dataset = strokerehab_load_dataset(filter_for_testset=True)
+        else:
+            self.dataset = strokerehab_load_dataset(**kwargs)
         if 'test' in self.dataset:
             self.dataset = self.dataset['test']
 

@@ -22,9 +22,24 @@ if __name__ == '__main__':
                         help='Annotation frequency in seconds')
     parser.add_argument('--sampling_fps', type=int, default=8, 
                         help='Sampling frames per second')
-
+    parser.add_argument('--dataset_kwargs', type=str, default=None, 
+                        help='Dataset parameters as comma-separated key=value pairs')
     args = parser.parse_args()
     
+    # Process dataset kwargs from string to dictionary
+    kwargs = {}
+    if args.dataset_kwargs:
+        for item in args.dataset_kwargs.split(';'):
+            if '=' in item:
+                key, value = item.split('=', 1)
+                # Convert string values to appropriate types
+                if value.lower() == 'True':
+                    kwargs[key] = True
+                elif value.lower() == 'False':
+                    kwargs[key] = False
+                else:
+                    kwargs[key] = value
+
     hand_predictor = HandPredictor(
         dino_model_id=args.dino_model_id,
         pose_model_id=args.pose_model_id,
@@ -33,9 +48,11 @@ if __name__ == '__main__':
         coco_kpts_threshold=args.coco_kpts_threshold,
         device=args.device
     )
+
     human_input_data_manager = DataManager(
         annotation_frequency_s=args.annotation_frequency,
-        sampling_fps=args.sampling_fps
+        sampling_fps=args.sampling_fps,
+        kwargs=kwargs
     )
 
     auto_api = AutoAPI(

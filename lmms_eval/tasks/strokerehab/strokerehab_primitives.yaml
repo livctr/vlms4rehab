@@ -21,6 +21,24 @@ metric_list:
   - metric: action_error_rate
     aggregation: mean
     higher_is_better: false
+  - metric: avg_mae
+    aggregation: mean
+    higher_is_better: false
+  - metric: reach_mae
+    aggregation: mean
+    higher_is_better: false
+  - metric: reposition_mae
+    aggregation: mean
+    higher_is_better: false
+  - metric: transport_mae
+    aggregation: mean
+    higher_is_better: false
+  - metric: stabilize_mae
+    aggregation: mean
+    higher_is_better: false
+  - metric: idle_mae
+    aggregation: mean
+    higher_is_better: false
 filter_list:
   - name: "combine-and-parse"
     filter:
