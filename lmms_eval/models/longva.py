@@ -27,7 +27,7 @@ from lmms_eval import utils
 from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
-from lmms_eval.models.model_utils.load_video import read_video_pyav
+from lmms_eval.models.model_utils.load_video import read_video_pyav, load_long_video_decord
 
 try:
     from longva.constants import (
@@ -75,6 +75,9 @@ class LongVA(lmms):
         truncate_context: Optional[bool] = False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
         customized_config: Optional[str] = None,  # ends in json
         max_frames_num: Optional[int] = 32,
+        sampling_strategy: str = "uniform",
+        sampling_fps: int = 8,
+        overlap_frames_num: int = 0,
         mm_spatial_pool_stride: Optional[int] = 2,
         mm_spatial_pool_mode: Optional[str] = "average",
         token_strategy: Optional[str] = "single",  # could be "single" or "multiple", "multiple" denotes adding multiple <image> tokens for each frame
@@ -111,7 +114,10 @@ class LongVA(lmms):
 
         self.pretrained = pretrained
         self.token_strategy = token_strategy
-        self.max_frames_num = max_frames_num
+        self.max_frames_num = int(max_frames_num)
+        self.sampling_strategy = sampling_strategy
+        self.overlap_frames_num = int(overlap_frames_num)
+        self.sampling_fps = int(sampling_fps)
         self.mm_spatial_pool_stride = mm_spatial_pool_stride
         self.mm_spatial_pool_mode = mm_spatial_pool_mode
         self.video_decode_backend = video_decode_backend
@@ -240,74 +246,7 @@ class LongVA(lmms):
             return self.tokenizer.decode([tokens])
 
     def loglikelihood(self, requests: List[Instance]) -> List[Tuple[float, bool]]:
-        # TODO
-        res = []
-        pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
-
-        for contexts, doc_to_target, doc_to_visual, doc_id, task, split in [reg.args for reg in requests]:
-            # encode, pad, and truncate contexts for this batch
-            if type(doc_to_target) == str:
-                continuation = doc_to_target
-            else:
-                continuation = doc_to_target(self.task_dict[task][split][doc_id])
-            visuals = [doc_to_visual(self.task_dict[task][split][doc_id])]
-            visuals = self.flatten(visuals)
-            image_sizes = [[visual.size[0], visual.size[1]] for visual in visuals]
-            if visuals:
-                image = process_images(visuals, self._image_processor, self._config)
-                if type(image) is list:
-                    image = [_image.to(dtype=torch.float16, device=self.device) for _image in image]
-                else:
-                    image = image.to(dtype=torch.float16, device=self.device)
-            else:
-                image = None
-
-            prompts_input = contexts[0] if isinstance(contexts, list) else contexts
-
-            if image is not None and len(image) != 0 and DEFAULT_IMAGE_TOKEN not in prompts_input:
-                """
-                Three senarios:
-                1. No image, and there for, no image token should be added.
-                2. image token is already specified in the context, so we don't need to add it.
-                3. image token is not specified in the context and there is image inputs, so we need to add it. In this case, we add the image token at the beginning of the context and add a new line.
-                """
-                image_tokens = [DEFAULT_IMAGE_TOKEN] * len(visuals)
-                image_tokens = " ".join(image_tokens)
-                prompts_input = image_tokens + "\n" + (contexts[0] if isinstance(contexts, list) else contexts)
-
-            # This is much safer for llama3, as we now have some object type in it
-            if "llama_3" in self.conv_template:
-                conv = copy.deepcopy(conv_templates[self.conv_template])
-            else:
-                conv = conv_templates[self.conv_template].copy()
-
-            conv.append_message(conv.roles[0], prompts_input)
-            conv.append_message(conv.roles[1], None)
-            prompt = conv.get_prompt()
-            pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
-            contxt_id = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(self.device)
-            # Add the answer of the second role
-            conv.messages[1][1] = continuation
-
-            prompt = conv.get_prompt()
-            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).to(self.device)
-            labels = input_ids.clone()
-            # Context part no need to calculate for loss
-            labels[0, : contxt_id.shape[1]] = -100
-            with torch.inference_mode():
-                outputs = self.model(input_ids=input_ids, labels=labels, images=image, use_cache=True, image_sizes=image_sizes)
-            loss = outputs["loss"]
-            # loss = torch.exp(loss)
-            logits = outputs["logits"]
-            greedy_tokens = logits.argmax(dim=-1)
-            cont_toks = input_ids[:, contxt_id.shape[1] :]  # [1, seq]
-            greedy_tokens = greedy_tokens[:, contxt_id.shape[1] : input_ids.shape[1]]  # [1, seq]
-            max_equal = (greedy_tokens == cont_toks).all()
-            res.append((float(loss.item()), bool(max_equal)))
-            pbar.update(1)
-
-        pbar.close()
-        return res
+        raise NotImplementedError("Deleted loglikelihood method for LongVA")
 
     def flatten(self, input):
         new_list = []
@@ -354,45 +293,37 @@ class LongVA(lmms):
             batched_visuals = [batched_doc_to_visual[0](self.task_dict[task][split][ids]) for ids in batched_doc_id]  # [B, N]
             flattened_visuals = self.flatten(batched_visuals)  # [B*N]
             assert len(batched_visuals) == 1
+            assert self.video_decode_backend == "decord"
+            visual, context = batched_visuals[0], batched_contexts[0]
+            videos = load_long_video_decord(
+                batched_visuals[0][0],
+                self.max_frames_num,
+                self.sampling_strategy,
+                self.overlap_frames_num,
+                self.sampling_fps,
+            )
+            task_type = "video"
+
+            gen_kwargs = all_gen_kwargs[0]
+            if "image_aspect_ratio" in gen_kwargs.keys() and "image_aspect_ratio" not in self._config.__dict__:
+                # here we should pop it out of gen_kwargs so that it doesn't get passed to the model for next step of generation
+                self._config.image_aspect_ratio = gen_kwargs.pop("image_aspect_ratio")
+                eval_logger.info(f"Setting image aspect ratio: {self._config.image_aspect_ratio}")
 
             # we assume all gen kwargs in the batch are the same
             # this is safe to assume because the `grouper` object ensures it.
-            gen_kwargs = all_gen_kwargs[0]
             if "until" in gen_kwargs:
                 gen_kwargs.pop("until")
 
-            question_input = []
 
-            for visual, context in zip(batched_visuals, batched_contexts):
-                if "image_aspect_ratio" in gen_kwargs.keys() and "image_aspect_ratio" not in self._config.__dict__:
-                    # here we should pop it out of gen_kwargs so that it doesn't get passed to the model for next step of generation
-                    self._config.image_aspect_ratio = gen_kwargs.pop("image_aspect_ratio")
-                    eval_logger.info(f"Setting image aspect ratio: {self._config.image_aspect_ratio}")
+            def build_video(video):
+                video = self._image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
+                image_tensor = [video]
+                return image_tensor
+            
+            def build_input_ids(image_tensor):
 
-                # encode, pad, and truncate contexts for this batch
-                if type(visual[0]) == PIL.Image.Image:  # For image task
-                    image_tensor = process_images(visual, self._image_processor, self._config)
-                    if type(image_tensor) is list:
-                        image_tensor = [_image.to(dtype=torch.float16, device=self.device) for _image in image_tensor]
-                    else:
-                        image_tensor = image_tensor.to(dtype=torch.float16, device=self.device)
-
-                    task_type = "image"
-
-                elif type(visual[0]) == str:  # For video task
-                    image_tensor = []
-                    try:
-                        if self.video_decode_backend == "decord":
-                            frames = self.load_video(visual, self.max_frames_num)
-                        elif self.video_decode_backend == "pyav":
-                            frames = read_video_pyav(visual[0], num_frm=self.max_frames_num)
-                        frames = self._image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].half().cuda()
-                        image_tensor.append(frames)
-                    except Exception as e:
-                        eval_logger.error(f"Error {e} in loading video")
-                        image_tensor = None
-
-                    task_type = "video"
+                question_input = []
 
                 if image_tensor is not None and len(image_tensor) != 0 and DEFAULT_IMAGE_TOKEN not in context:
                     """
@@ -405,7 +336,7 @@ class LongVA(lmms):
                     if task_type == "image":
                         image_tokens = [DEFAULT_IMAGE_TOKEN] * len(visual) if isinstance(visual, list) else [DEFAULT_IMAGE_TOKEN]
                     elif task_type == "video":
-                        image_tokens = [DEFAULT_IMAGE_TOKEN] * len(frames) if self.token_strategy == "multiple" else [DEFAULT_IMAGE_TOKEN]
+                        image_tokens = [DEFAULT_IMAGE_TOKEN] * len(image_tensor[0]) if self.token_strategy == "multiple" else [DEFAULT_IMAGE_TOKEN]
 
                     image_tokens = " ".join(image_tokens)
                     question = image_tokens + "\n" + context
@@ -422,52 +353,63 @@ class LongVA(lmms):
                 prompt_question = conv.get_prompt()
                 question_input.append(prompt_question)
 
-            # preconfigure gen_kwargs with defaults
-            if "max_new_tokens" not in gen_kwargs:
-                gen_kwargs["max_new_tokens"] = 1024
-            if "temperature" not in gen_kwargs:
-                gen_kwargs["temperature"] = 0
-            if "do_sample" not in gen_kwargs:
-                gen_kwargs["do_sample"] = False
-            if "top_p" not in gen_kwargs:
-                gen_kwargs["top_p"] = None
-            if "num_beams" not in gen_kwargs:
-                gen_kwargs["num_beams"] = 1
 
-            input_ids_list = [tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt") for prompt in question_input]
-            pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
-            input_ids = self.pad_sequence(input_ids_list, batch_first=True, padding_value=pad_token_ids).to(self.device)
-            attention_masks = input_ids.ne(pad_token_ids).to(self.device)
+                # preconfigure gen_kwargs with defaults
+                gen_kwargs_copy = copy.deepcopy(gen_kwargs)
+                if "max_new_tokens" not in gen_kwargs_copy:
+                    gen_kwargs_copy["max_new_tokens"] = 1024
+                gen_kwargs_copy["temperature"] = 0.00001
+                if "do_sample" not in gen_kwargs_copy:
+                    gen_kwargs_copy["do_sample"] = False
+                if "top_p" not in gen_kwargs_copy:
+                    gen_kwargs_copy["top_p"] = None
+                if "num_beams" not in gen_kwargs_copy:
+                    gen_kwargs_copy["num_beams"] = 1
 
-            if task_type == "image":
-                gen_kwargs["image_sizes"] = [flattened_visuals[idx].size for idx in range(len(flattened_visuals))]
-            elif task_type == "video":
-                stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-                keywords = [stop_str]
-                stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
-                gen_kwargs["modalities"] = ["video"]
-                gen_kwargs["stopping_criteria"] = [stopping_criteria]
-                self._config.mm_spatial_pool_stride = self.mm_spatial_pool_stride
-                self._config.mm_spatial_pool_mode = self.mm_spatial_pool_mode
+                input_ids_list = [tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt") for prompt in question_input]
+                pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+                input_ids = self.pad_sequence(input_ids_list, batch_first=True, padding_value=pad_token_ids).to(self.device)
+                attention_masks = input_ids.ne(pad_token_ids).to(self.device)
+
+                if task_type == "image":
+                    gen_kwargs_copy["image_sizes"] = [flattened_visuals[idx].size for idx in range(len(flattened_visuals))]
+                elif task_type == "video":
+                    stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+                    keywords = [stop_str]
+                    stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
+                    gen_kwargs_copy["modalities"] = ["video"]
+                    gen_kwargs_copy["stopping_criteria"] = [stopping_criteria]
+                    self._config.mm_spatial_pool_stride = self.mm_spatial_pool_stride
+                    self._config.mm_spatial_pool_mode = self.mm_spatial_pool_mode
+
+                return input_ids, attention_masks, pad_token_ids, gen_kwargs_copy
 
             # These steps are not in LLaVA's original code, but are necessary for generation to work
             # TODO: attention to this major generation step...
             if "image_aspect_ratio" in gen_kwargs.keys():
                 gen_kwargs.pop("image_aspect_ratio")
             try:
-                with torch.inference_mode():
-                    cont = self.model.generate(input_ids, attention_mask=attention_masks, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs)
 
-                text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
+                outputs = []
+                for video in videos:
+                    image_tensor = build_video(video)
+                    input_ids, attention_masks, pad_token_ids, gen_kwargs_copy = build_input_ids(image_tensor)
+                    with torch.inference_mode():
+                        cont = self.model.generate(input_ids, attention_mask=attention_masks, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs_copy)
+                    text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
+                    outputs.append(text_outputs)
             except Exception as e:
                 raise e
 
-            text_outputs = [response.strip() for response in text_outputs]
-            res.extend(text_outputs)
-            self.cache_hook.add_partial("generate_until", (context, gen_kwargs), text_outputs)
+            import pdb ; pdb.set_trace()
+            outputs_print = "\n".join(outputs)
+            eval_logger.debug(f"Response: {outputs_print}")
+            res.append(outputs)
+            self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)
             pbar.update(1)
-            # reorder this group of results back to original unsorted form
-        res = re_ords.get_original(res)
+
+        # reorder this group of results back to original unsorted form
+        # res = re_ords.get_original(res)
 
         pbar.close()
         return res

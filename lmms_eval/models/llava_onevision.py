@@ -303,6 +303,16 @@ class Llava_OneVision(lmms):
             split = batched_split[0]
             batched_visuals = [batched_doc_to_visual[0](self.task_dict[task][split][ids]) for ids in batched_doc_id]  # [B, N]
             assert len(batched_visuals) == 1
+            assert self.video_decode_backend == "decord"
+            videos = load_long_video_decord(
+                batched_visuals[0][0],
+                self.max_frames_num,
+                self.sampling_strategy,
+                self.overlap_frames_num,
+                self.sampling_fps,
+            )
+            context = batched_contexts[0]
+            task_type = "video"
 
             # we assume all gen kwargs in the batch are the same
             # this is safe to assume because the `grouper` object ensures it.
@@ -318,67 +328,9 @@ class Llava_OneVision(lmms):
                 gen_kwargs["top_p"] = None
             if "num_beams" not in gen_kwargs:
                 gen_kwargs["num_beams"] = 1
-
-            question_input = []
-            # import ipdb; ipdb.set_trace()
-            for visual, context in zip(batched_visuals, batched_contexts):
-                if origin_image_aspect_ratio is not None and self._config.image_aspect_ratio != origin_image_aspect_ratio:
-                    self._config.image_aspect_ratio = origin_image_aspect_ratio
-                    eval_logger.info(f"Resetting image aspect ratio to {origin_image_aspect_ratio}")
-
-                if visual is None or visual == []:  # for text-only tasks.
-                    visual = None
-                    task_type = "text"
-                    placeholder_count = 0
-                    image_tensor = None
-                else:
-                    if len(visual) > 1 or "image_aspect_ratio" not in self._config.__dict__:  # for multi image case, we treat per image aspect ratio as "pad" by default.
-                        self._config.image_aspect_ratio = getattr(gen_kwargs, "image_aspect_ratio", "pad")
-                        eval_logger.info(f"In Multi-Image setting, image aspect ratio: {self._config.image_aspect_ratio}")
-
-                    if "task_type" in metadata and metadata["task_type"] == "video" and "sample_frames" in metadata:  # overwrite logic for video task with multiple static image frames
-                        assert type(visual) == list, "sample_frames must be specified for video task"
-                        sample_indices = np.linspace(0, len(visual) - 1, metadata["sample_frames"], dtype=int)
-                        visual = [visual[i] for i in sample_indices]
-                        assert len(visual) == metadata["sample_frames"]
-
-                        image_tensor = process_images(visual, self._image_processor, self._config)
-                        if type(image_tensor) is list:
-                            image_tensor = [_image.to(dtype=torch.float16, device=self.device) for _image in image_tensor]
-                        else:
-                            image_tensor = image_tensor.to(dtype=torch.float16, device=self.device)
-
-                        task_type = "video"
-                        placeholder_count = 1
-
-                    elif type(visual[0]) == PIL.Image.Image:  # For image, multi-image tasks
-                        image_tensor = process_images(visual, self._image_processor, self._config)
-                        if type(image_tensor) is list:
-                            image_tensor = [_image.to(dtype=torch.float16, device=self.device) for _image in image_tensor]
-                        else:
-                            image_tensor = image_tensor.to(dtype=torch.float16, device=self.device)
-
-                        task_type = "image"
-                        placeholder_count = len(visual) if isinstance(visual, list) else 1
-
-                    elif type(visual[0]) == str:  # For video task
-                        try:
-                            if self.video_decode_backend == "decord":
-                                videos = load_long_video_decord(
-                                    visual[0],
-                                    self.max_frames_num,
-                                    self.sampling_strategy,
-                                    self.overlap_frames_num,
-                                    self.sampling_fps,
-                                )
-
-                            elif self.video_decode_backend == "pyav":
-                                raise NotImplementedError("Remove PyAV for long video testing.")
-                        except Exception as e:
-                            eval_logger.error(f"Error {e} in loading video")
-                            image_tensor = None
-
-                        task_type = "video"
+            if origin_image_aspect_ratio is not None and self._config.image_aspect_ratio != origin_image_aspect_ratio:
+                self._config.image_aspect_ratio = origin_image_aspect_ratio
+                eval_logger.info(f"Resetting image aspect ratio to {origin_image_aspect_ratio}")
 
             def build_video(video):
                 video = self._image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
@@ -404,6 +356,7 @@ class Llava_OneVision(lmms):
                     question = image_tokens + "\n" + context
                 else:
                     question = context
+                
 
                 # This is much safer for llama3, as we now have some object type in it
                 if "llama_3" in self.conv_template:
@@ -411,6 +364,7 @@ class Llava_OneVision(lmms):
                 else:
                     conv = conv_templates[self.conv_template].copy()
 
+                question_input = []
                 if utils.is_json(question):  # conversational question input
                     question = json.loads(question)
                     for idx, item in enumerate(question):
@@ -454,8 +408,6 @@ class Llava_OneVision(lmms):
 
                 return input_ids, attention_masks, pad_token_ids, gen_kwargs_copy
 
-
-            import pdb ; pdb.set_trace()
             outputs = []
             for video in videos:
                 image_tensor = build_video(video)
