@@ -15,6 +15,9 @@ from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 
+from lmms_eval.models.model_utils.load_video import load_long_video_decord
+
+
 eval_logger = logging.getLogger("eval_logger")
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
@@ -100,23 +103,41 @@ def get_index(bound, fps, max_frame, first_idx=0, num_segments=32):
     return frame_indices
 
 
-def load_video(video_path, bound=None, input_size=448, max_num=1, num_segments=32):
+def load_video(video_path,
+               bound=None,
+               input_size=448,
+               max_num=1,
+               max_frames_num=32,
+               sampling_strategy="uniform",
+               overlap_frames_num=0,
+               sampling_fps=8,
+               force_sample=True
+):
     vr = VideoReader(video_path, ctx=cpu(0), num_threads=1)
-    max_frame = len(vr) - 1
-    fps = float(vr.get_avg_fps())
 
-    pixel_values_list, num_patches_list = [], []
     transform = build_transform(input_size=input_size)
-    frame_indices = get_index(bound, fps, max_frame, first_idx=0, num_segments=num_segments)
-    for frame_index in frame_indices:
-        img = Image.fromarray(vr[frame_index].asnumpy()).convert("RGB")
-        img = dynamic_preprocess(img, image_size=input_size, use_thumbnail=True, max_num=max_num)
-        pixel_values = [transform(tile) for tile in img]
-        pixel_values = torch.stack(pixel_values)
-        num_patches_list.append(pixel_values.shape[0])
-        pixel_values_list.append(pixel_values)
-    pixel_values = torch.cat(pixel_values_list)
-    return pixel_values, num_patches_list
+
+    frame_indices_gen = load_long_video_decord(
+        video_path,
+        max_frames_num=max_frames_num,
+        sampling_strategy=sampling_strategy,
+        overlap_frames_num=overlap_frames_num,
+        sampling_fps=sampling_fps,
+        force_sample=force_sample,
+        ret_idx=True
+    )
+
+    for frame_indices in frame_indices_gen:
+        pixel_values_list, num_patches_list = [], []
+        for frame_index in frame_indices:
+            img = Image.fromarray(vr[frame_index].asnumpy()).convert("RGB")
+            img = dynamic_preprocess(img, image_size=input_size, use_thumbnail=True, max_num=max_num)
+            pixel_values = [transform(tile) for tile in img]
+            pixel_values = torch.stack(pixel_values)
+            num_patches_list.append(pixel_values.shape[0])
+            pixel_values_list.append(pixel_values)
+        pixel_values = torch.cat(pixel_values_list)
+        yield pixel_values, num_patches_list
 
 
 import math
@@ -179,6 +200,10 @@ class InternVL2(lmms):
         batch_size: str = "1",
         num_frame: int = 30,
         num_layers=None,
+        max_frames_num: int = 32,
+        sampling_strategy: str = "uniform",
+        sampling_fps: int = 8,
+        overlap_frames_num: int = 0, 
         **kwargs,
     ):
         super().__init__()
@@ -238,6 +263,11 @@ class InternVL2(lmms):
             self.model.to(self._device)
             self._rank = 0
             self._world_size = 1
+
+        self.max_frames_num = int(max_frames_num)
+        self.sampling_strategy = sampling_strategy
+        self.overlap_frames_num = int(overlap_frames_num)
+        self.sampling_fps = int(sampling_fps)
 
         self.modality = modality
 
@@ -317,12 +347,29 @@ class InternVL2(lmms):
             elif self.modality == "video":
                 assert len(visuals) == 1, f"Only one video is supported, but got {len(visuals)} videos."
                 video_path = visuals[0]
-                pixel_values, num_patches_list = load_video(video_path, num_segments=self.num_frame)
-                pixel_values = pixel_values.to(torch.bfloat16).cuda()
-                video_prefix = "".join([f"Frame{i+1}: <image>\n" for i in range(len(num_patches_list))])
-                question = video_prefix + contexts
-                response, history = self.model.chat(self.tokenizer, pixel_values, question, gen_kwargs, num_patches_list=num_patches_list, history=None, return_history=True)
-            res.append(response)
+
+                video_gen = load_video(
+                    video_path,
+                    bound=None,
+                    input_size=448,
+                    max_num=1,
+                    max_frames_num=self.max_frames_num,
+                    sampling_strategy=self.sampling_strategy,
+                    overlap_frames_num=self.overlap_frames_num,
+                    sampling_fps=self.sampling_fps,
+                )
+
+                outputs = []
+                for pixel_values, num_patches_list in video_gen:
+                    pixel_values = pixel_values.to(torch.bfloat16).cuda()
+                    video_prefix = "".join([f"Frame{i+1}: <image>\n" for i in range(len(num_patches_list))])
+                    question = video_prefix + contexts
+                    response, history = self.model.chat(self.tokenizer, pixel_values, question, gen_kwargs, num_patches_list=num_patches_list, history=None, return_history=True)
+                    outputs.append(response)
+
+            output_print = "\n".join(outputs)
+            eval_logger.info(f"Response: {output_print}")
+            res.append(outputs)
             pbar.update(1)
         pbar.close()
         return res
@@ -332,3 +379,14 @@ class InternVL2(lmms):
 
     def generate_until_multi_round(self, requests) -> List[str]:
         raise NotImplementedError("TODO: Implement multi-round generation for InternVL2")
+
+
+# def load_video(video_path,
+#                bound=None,
+#                input_size=448,
+#                max_num=1,
+#                max_frames_num=32,
+#                sampling_strategy="uniform",
+#                overlap_frames_num=0,
+#                sampling_fps=8,
+#                force_sample=True

@@ -9,6 +9,7 @@ Applying modern computer vision foundation models to stroke rehabilitation tasks
 
 conda create -n cvfm4rehab python=3.10
 conda activate cvfm4rehab
+pip install levenshtein
 
 pip install -e .
 pip install s2wrapper@git+https://github.com/bfshi/scaling_on_scales  # for VILA
@@ -23,6 +24,8 @@ cd LLaVA-NeXT ; pip install -e . ; cd ..
 # Metric(s)
 pip install python-Levenshtein
 ```
+
+Follow [LongVA GitHub](https://github.com/EvolvingLMMs-Lab/LongVA) to create the LongVA environment.
 
 ### Reproduce the Results
 

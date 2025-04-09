@@ -25,7 +25,7 @@ def load_video_decord(video_path, max_frames_num):
     return spare_frames  # (frames, height, width, channels)
 
 
-def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overlap_frames_num, sampling_fps, force_sample=False):
+def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overlap_frames_num, sampling_fps, force_sample=False, ret_idx=False):
     if max_frames_num == 0:
         return np.zeros((1, 336, 336, 3))
     vr = VideoReader(video_path, ctx=cpu(0), num_threads=1)
@@ -33,14 +33,16 @@ def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overla
     video_fps = vr.get_avg_fps()
     sampling_rate = int(round(video_fps / sampling_fps))  # approximate the sampling fps, want an even sampling_rate
 
+    ret_fn = lambda idx: idx if ret_idx else vr.get_batch(idx).asnumpy()
+
     if sampling_strategy == "uniform":
         if total_frame_num < max_frames_num and not force_sample:
             eval_logger.info(f"Video has {total_frame_num} frames, less than {max_frames_num}, not sampling")
-            yield vr.get_batch(np.arange(total_frame_num)).asnumpy()
+            frame_idx = np.arange(total_frame_num)
         else:
             eval_logger.info(f"Sampling {max_frames_num} frames uniformly over {total_frame_num} frames")
             frame_idx = np.linspace(0, total_frame_num - 1, max_frames_num, dtype=int)
-        yield vr.get_batch(frame_idx).asnumpy()
+        yield ret_fn(frame_idx)
     elif sampling_strategy == "dense":
         eval_logger.info(f"Video FPS: {video_fps}, Desired Sampling FPS: {sampling_fps}, Achieved Sampling FPS: {float(video_fps) / sampling_rate}")
         step = (max_frames_num - overlap_frames_num) * sampling_rate
@@ -48,7 +50,7 @@ def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overla
         while start + (max_frames_num - 1) * sampling_rate < total_frame_num:
             indices = start + np.arange(max_frames_num) * sampling_rate
             eval_logger.info(f"Yielding {len(indices)} frames [{indices[0]}, {indices[-1]}] of total {total_frame_num} frames")
-            yield vr.get_batch(indices).asnumpy()
+            yield ret_fn(indices)
             start += step
     else:
         raise ValueError(f"Invalid sampling strategy: {sampling_strategy}")
