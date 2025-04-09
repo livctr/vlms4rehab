@@ -23,12 +23,11 @@ from lmms_eval.api.registry import register_model
 eval_logger = logging.getLogger("lmms-eval")
 # import sys;sys.path.append("llava-video")
 
-from llava.constants import (
-    DEFAULT_IM_END_TOKEN,
-    DEFAULT_IM_START_TOKEN,
-    DEFAULT_IMAGE_TOKEN,
-    IMAGE_TOKEN_INDEX,
-)
+DEFAULT_IMAGE_TOKEN = "<image>"
+IMAGE_TOKEN_INDEX = -200
+DEFAULT_IM_START_TOKEN = "<im_start>"
+DEFAULT_IM_END_TOKEN = "<im_end>"
+
 from llava.conversation import SeparatorStyle, conv_templates
 #from llava.data.dataset import LazySupervisedDataset
 from llava.mm_utils import (
@@ -37,7 +36,7 @@ from llava.mm_utils import (
     process_images,
     tokenizer_image_token,
 )
-from llava.model.builder import load_pretrained_model
+# from llava.model.builder import load_pretrained_model
 from llava.utils import disable_torch_init
 
 
@@ -51,13 +50,16 @@ class VILA(lmms):
         self,
         pretrained: str = "Efficient-Large-Model/VILA1.5-40b",
         max_frames_num: Optional[int] = 100,
+        sampling_strategy: str = "uniform",
+        sampling_fps: int = 8,
+        overlap_frames_num: int = 0,
         truncation: Optional[bool] = True,
         device: Optional[str] = "cuda:0",
         batch_size: Optional[Union[int, str]] = 1,
         attn_implementation=(
             "sdpa" if torch.__version__ >= "2.1.2" else "eager"
         ),  # inference implementation for attention, can be "sdpa", "eager", "flash_attention_2". Seems FA2 is not effective during inference: https://discuss.huggingface.co/t/flash-attention-has-no-effect-on-inference/73453/5
-        device_map="cuda:0",
+        device_map="auto",
         conv_template="hermes-2",
         use_cache=True,
         truncate_context=False,  # whether to truncate the context in generation, set it False for LLaVA-1.6
@@ -66,6 +68,7 @@ class VILA(lmms):
     ) -> None:
         super().__init__()
         assert kwargs == {}, f"Unexpected kwargs: {kwargs}"
+        import pdb ; pdb.set_trace()
 
         accelerator_kwargs = InitProcessGroupKwargs(timeout=timedelta(weeks=52))
         accelerator = Accelerator(kwargs_handlers=[accelerator_kwargs])
@@ -82,11 +85,11 @@ class VILA(lmms):
         self.pretrained = pretrained
         self.model_name = get_model_name_from_path(pretrained)
         self.max_frames_num = max_frames_num
+        self.sampling_strategy = sampling_strategy
+        self.sampling_fps = sampling_fps
+        self.overlap_frames_num = overlap_frames_num
         # self._config = AutoConfig.from_pretrained(self.pretrained)
 
-        import pdb
-
-        pdb.set_trace()
         self._tokenizer, self._model, self._image_processor, self._max_length = load_pretrained_model(pretrained, model_base=pretrained, model_name=self.model_name, device_map=self.device_map, attn_implementation=attn_implementation)
 
         self.model.image_processor = self._image_processor
@@ -281,12 +284,15 @@ class VILA(lmms):
         res = []
         pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
 
+        import pdb ; pdb.set_trace()
+
         for contexts, gen_kwargs, doc_to_visual, doc_id, task, split in [reg.args for reg in requests]:
             # encode, pad, and truncate contexts for this batch
             visuals = [doc_to_visual(self.task_dict[task][split][doc_id])]
             visuals = self.flatten(visuals)
 
-            num_video_frames = self.model.config.num_video_frames
+            # num_video_frames = self.model.config.num_video_frames
+            num_video_frames = self.max_frames_num
             videos = []
             if self.max_frames_num == 0:
                 images = [Image.new("RGB", (448, 448), (0, 0, 0))] * num_video_frames
@@ -297,7 +303,8 @@ class VILA(lmms):
                     if self.video_decode_backend == "decord":
                         images = self.load_video(visual, num_video_frames)
                     elif self.video_decode_backend == "pyav":
-                        images = read_video_pyav(visual, num_frm=num_video_frames)
+                        raise NotImplementedError("Pyav video decoding is not implemented yet.")
+                        # images = read_video_pyav(visual, num_frm=num_video_frames)
                     video = process_images(images, self.model.image_processor, self.model.config).half().cuda()
                     videos.append(video)
 
@@ -318,7 +325,7 @@ class VILA(lmms):
             conv.append_message(conv.roles[1], None)
             prompt = conv.get_prompt()
 
-            input_ids = tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt").unsqueeze(0).cuda()
+            input_ids = tokenizer_image_token(prompt, self.tokenizer, return_tensors="pt").unsqueeze(0).cuda()
             pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
             # if "llama_3" in self.conv_template:
             #     pad_token_ids = 0  # lmms-lab/llama3-llava-8b is trained on this pad token id. You may need to customize this for other models.
@@ -345,23 +352,24 @@ class VILA(lmms):
             if "num_beams" not in gen_kwargs:
                 gen_kwargs["num_beams"] = 1
 
+            import pdb ; pdb.set_trace()
             with torch.inference_mode():
-                output_ids = self.model.generate(
-                    input_ids=input_ids,
-                    images=videos,
-                    attention_mask=attention_masks,
-                    use_cache=self.use_cache,
-                    stopping_criteria=[stopping_criteria],
-                    do_sample=True if gen_kwargs["temperature"] > 0 else False,
-                    temperature=gen_kwargs["temperature"],
-                    top_p=gen_kwargs["top_p"],
-                    num_beams=gen_kwargs["num_beams"],
-                    max_new_tokens=gen_kwargs["max_new_tokens"],
-                )
-                # output_ids_2 = self.model.generate(inputs=input_ids, images=videos, attention_mask=attention_masks, modalities="video", do_sample=False, max_new_tokens=50,stopping_criteria=[stopping_criteria])
+                # output_ids = self.model.generate(
+                #     input_ids=input_ids,
+                #     images=videos,
+                #     attention_mask=attention_masks,
+                #     use_cache=self.use_cache,
+                #     stopping_criteria=[stopping_criteria],
+                #     do_sample=True if gen_kwargs["temperature"] > 0 else False,
+                #     temperature=gen_kwargs["temperature"],
+                #     top_p=gen_kwargs["top_p"],
+                #     num_beams=gen_kwargs["num_beams"],
+                #     max_new_tokens=gen_kwargs["max_new_tokens"],
+                # )
+                output_ids_2 = self.model.generate(inputs=input_ids, images=videos, attention_mask=attention_masks, modalities="video", do_sample=False, max_new_tokens=50,stopping_criteria=[stopping_criteria])
                 # output_ids = self.model.generate(inputs=input_ids, images=videos, attention_mask=attention_masks, modalities="video", do_sample=True, temperature=0.2, max_new_tokens=50,use_cache=True)
 
-            outputs = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+            outputs = self.tokenizer.batch_decode(output_ids_2, skip_special_tokens=True)[0].strip()
             print("Question: ", cur_prompt)
             print("Answer: ", outputs)
             res.append(outputs)

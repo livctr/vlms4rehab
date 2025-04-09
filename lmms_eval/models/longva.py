@@ -401,7 +401,6 @@ class LongVA(lmms):
             except Exception as e:
                 raise e
 
-            import pdb ; pdb.set_trace()
             outputs_print = "\n".join(outputs)
             eval_logger.debug(f"Response: {outputs_print}")
             res.append(outputs)

@@ -75,49 +75,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-audio = [
-    "more-itertools",
-    "editdistance",
-    "zhconv",
-    "librosa",
-    "soundfile"
-]
 metrics = [
-    "pywsd",
-    "spacy",
-    "anls",
-    "rouge",
-    "capture_metric",
     "Levenshtein",
 ]
 gemini = [
     "google-generativeai",
 ]
-reka = [
-    "httpx==0.23.3",
-    "reka-api",
-]
 qwen = [
-    "decord",
     "qwen_vl_utils",
 ]
-mmsearch = [
-    "playwright",
-    "requests",
-    "matplotlib",
-    "duckduckgo_search",
-    "langchain",
-    "langchain-community",
-    "beautifulsoup4",
-    "FlagEmbedding",
-    "rouge",
-]
 all = [
-    "gemini",
-    "reka",
     "metrics",
+    "gemini",
     "qwen",
-    "mmsearch"
 ]
 
 [tool.setuptools.packages.find]
