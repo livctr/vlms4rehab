@@ -4,6 +4,4 @@
 [submodule "LongVA"]
 	path = LongVA
 	url = https://github.com/EvolvingLMMs-Lab/LongVA.git
-[submodule "VILA"]
-	path = VILA
-	url = https://github.com/NVlabs/VILA.git
+
