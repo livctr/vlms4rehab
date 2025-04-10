@@ -182,7 +182,7 @@ class HandPredictor:
     ):
         """
         Initialize the HandPredictor with object detection and pose estimation models.
-        
+
         Args:
             dino_model_id (str): The model ID for Grounding DINO zero-shot object detection
             pose_model_id (str): The model path or name for YOLO pose estimation

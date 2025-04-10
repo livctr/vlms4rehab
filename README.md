@@ -3,87 +3,34 @@
 Applying modern computer vision foundation models to stroke rehabilitation tasks.
 
 ### Set Up
-*Needs pytorch >=2.5.1, torchvision>=0.20.0*
 
+**Installation**
 
-Running LLaVA-OneVision, LLaVANexT-Video, InternVL
+```bash
 
-```python
-
-conda create -n cvfm4rehab_llava python=3.10
-conda activate cvfm4rehab_llava
-pip install -e .[metrics,llava_next]
-pip install deepspeed
-cd LLaVA-NeXT ; pip install -e . ; cd ..
+git clone https://github.com/livctr/cvfm4rehab.git
+cd cvfm4rehab
+bash ./setup_cvfm4rehab_envs.sh
 ```
 
-<!-- `./environment_setup.sh cvfm4rehab_vila` -> NVIDIA demo works, FloatPointQuantizeTorch is installed -->
-<!-- Then, if you do `pip install -e .[metrics]`, the environment gets messed up.
-Solution 1: manually check which packages are needed and add them to the VILA pyproject toml
-Solution 2: first install `lmms_eval`, then "specify it" with VILA.
-Try solution 2 first. -->
+The bash script creates three separate environments `cvfm4rehab_llava`, `cvfm4rehab_vila`, and `cvfm4rehab_longva` for running different models.
 
+| Environment | Models |
+|-------------|--------|
+| `cvfm4rehab_llava` | internvl2_5_[2,8,38,78]b, llava_next_video_[7,72]b, llava_ov_[0p5,7,72]b, |
+| `cvfm4rehab_vila` | nvila_[8,15]b, longvila_8b |
+| `cvfm4rehab_longva` | longva_7b |
 
-Running LongVILA, NVILA
+NOTE: longvila_8b, longva_7b not tested yet, longva_7b
 
-```python
+**Reproducing the Results**
 
-conda create -n cvfm4rehab_vila python=3.10
-conda init
-conda activate cvfm4rehab_vila
-pip install -e .[metrics]
+```bash
 
-cd VILA
-
-#################################################
-### Copied from `./VILA/environment_setup.sh` ###
-#################################################
-conda install -c nvidia cuda-toolkit -y
-
-# This is required to enable PEP 660 support
-pip install --upgrade pip setuptools
-
-# Install FlashAttention2
-pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8+cu122torch2.3cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
-
-# Install VILA
-pip install -e ".[train,eval]"
-
-# Quantization requires the newest triton version, and introduce dependency issue
-pip install triton==3.1.0
-
-# numpy introduce a lot dependencies issues, separate from pyproject.yaml
-# pip install numpy==1.26.4
-
-# Replace transformers and deepspeed files
-site_pkg_path=$(python -c 'import site; print(site.getsitepackages()[0])')
-cp -rv ./llava/train/deepspeed_replace/* $site_pkg_path/deepspeed/
-
-# Downgrade protobuf to 3.20 for backward compatibility
-pip install protobuf==3.20.*
-#################################################
-#################################################
-cd ..
+mv evaluate.sh.example evaluate.sh  # MAKE SURE TO fill in appropriate API keys
+bash evaluate.sh --model all --task strokerehab_summarization,strokerehab_primitives
 
 ```
-
-Follow [LongVA GitHub](https://github.com/EvolvingLMMs-Lab/LongVA) to create the LongVA environment.
-```python
-
-pip install -e .
-pip install python-Levenshtein
-
-# LLaVA
-cd LLaVA-NeXT
-pip install --upgrade pip
-pip install -e ".[train]"
-cd ..
-
-```
-
-### Reproduce the Results
-
-To reproduce the paper experiments, manually update  `model_configs.yaml` (for logging and model settings), `mv evaluate.sh.example evaluate.sh`, and manually update the `evaluate.sh` bash file. Plots are saved in the `visualization/plots` directory.
 
 
 ### Important Files
