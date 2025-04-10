@@ -57,6 +57,7 @@ def sr_primitives_doc_to_text(doc, lmms_eval_specific_kwargs=None):
         "- REPOSITION: hand in motion with no contact at the endpoint\n"
         "- STABILIZE: hand steady to keep a target object still\n"
         "- TRANSPORT: hand in motion to convey an object in space\n"
+        "ONLY OUTPUT THE COMMA-SEPARATED LIST OF FUNCTIONAL PRIMITIVES!\n\n"
     )
     return prompt
 
