@@ -19,10 +19,9 @@
 # Script credits: https://github.com/vision-x-nyu/thinking-in-space/blob/main/evaluate_all_in_one.sh
 
 ############################################## ARGS ##############################################
-export HF_HOME=""  # location of huggingface cache, comment out if using default
+export HF_HOME=""
 export HF_TOKEN=""
 wandb_entity=""  # leave empty if not using wandb
-wandb_project=""
 ##################################################################################################
 
 
@@ -37,7 +36,6 @@ internvl2_5_8b,\
 internvl2_5_38b,\
 internvl2_5_78b,\
 longva_7b,\
-longvila_8b,\
 nvila_8b,\
 nvila_15b"
 available_small_models="llava_ov_0p5b,\
@@ -45,7 +43,6 @@ llava_ov_7b,\
 llava_next_video_7b,\
 internvl2_5_2b,\
 longva_7b,\
-longvila_8b,\
 nvila_8b"
 launcher=accelerate
 log_path="./logs"
@@ -116,6 +113,7 @@ if [ "$models" = "small" ]; then
     IFS=',' read -r -a models <<<"$available_small_models"
 fi
 
+
 for model in "${models[@]}"; do
     for task in "${tasks[@]}"; do
         echo "==================================================================="
@@ -124,16 +122,19 @@ for model in "${models[@]}"; do
 
         deactivate_all_conda_envs
 
+        wandb_project=""
         case "$task" in
         "strokerehab_summarization")
             benchmark="$task"
             output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=uniform"
+            wandb_project="$task"
             ;;
         "strokerehab_primitives")
             benchmark="$task"
             output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=8,overlap_frames_num=0"
+            wandb_project="$task"
             ;;
         *)
             echo "Unknown task: $task"
@@ -211,11 +212,6 @@ for model in "${models[@]}"; do
             conda activate cvfm4rehab_longva
             model_family="longva"
             model_args="pretrained=lmms-lab/LongVA-7B,video_decode_backend=decord,conv_template=qwen_1_5,model_name=longva_qwen_7b,max_frames_num=32"
-            ;;
-        "longvila_8b")
-            conda activate cvfm4rehab_vila
-            model_family="nvila"
-            model_args="pretrained=Efficient-Large-Model/qwen2-7b-longvila-1M,video_decode_backend=decord,conv_template=llama_3,device_map=cuda,max_frames_num=32"
             ;;
         "nvila_8b")
             conda activate cvfm4rehab_vila
