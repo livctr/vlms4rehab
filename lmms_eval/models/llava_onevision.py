@@ -419,7 +419,7 @@ class Llava_OneVision(lmms):
                     raise e
 
             outputs_print = "\n".join(outputs)
-            eval_logger.info(f"Prediction: {outputs_print}")
+            eval_logger.debug(f"Prediction: {outputs_print}")
             res.append(outputs)
             self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)
             pbar.update(1)

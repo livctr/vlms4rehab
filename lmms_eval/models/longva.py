@@ -269,6 +269,74 @@ class LongVA(lmms):
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
 
+        def build_video(video):
+            video = self._image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
+            image_tensor = [video]
+            return image_tensor
+        
+        def build_input_ids(image_tensor):
+
+            question_input = []
+
+            if image_tensor is not None and len(image_tensor) != 0 and DEFAULT_IMAGE_TOKEN not in context:
+                """
+                Three senarios:
+                1. No image, and there for, no image token should be added.
+                2. image token is already specified in the context, so we don't need to add it.
+                3. image token is not specified in the context and there is image inputs, so we need to add it. In this case, we add the image token at the beginning of the context and add a new line.
+                4. For video tasks, we could add a <image> token or multiple <image> tokens for each frame in the context. This depends on the training strategy and should balance in test to decide which is better
+                """
+                if task_type == "image":
+                    image_tokens = [DEFAULT_IMAGE_TOKEN] * len(visual) if isinstance(visual, list) else [DEFAULT_IMAGE_TOKEN]
+                elif task_type == "video":
+                    image_tokens = [DEFAULT_IMAGE_TOKEN] * len(image_tensor[0]) if self.token_strategy == "multiple" else [DEFAULT_IMAGE_TOKEN]
+
+                image_tokens = " ".join(image_tokens)
+                question = image_tokens + "\n" + context
+            else:
+                question = context
+
+            # This is much safer for llama3, as we now have some object type in it
+            if "llama_3" in self.conv_template:
+                conv = copy.deepcopy(conv_templates[self.conv_template])
+            else:
+                conv = conv_templates[self.conv_template].copy()
+            conv.append_message(conv.roles[0], question)
+            conv.append_message(conv.roles[1], None)
+            prompt_question = conv.get_prompt()
+            question_input.append(prompt_question)
+
+
+            # preconfigure gen_kwargs with defaults
+            gen_kwargs_copy = copy.deepcopy(gen_kwargs)
+            if "max_new_tokens" not in gen_kwargs_copy:
+                gen_kwargs_copy["max_new_tokens"] = 1024
+            gen_kwargs_copy["temperature"] = 0.00001
+            if "do_sample" not in gen_kwargs_copy:
+                gen_kwargs_copy["do_sample"] = False
+            if "top_p" not in gen_kwargs_copy:
+                gen_kwargs_copy["top_p"] = None
+            if "num_beams" not in gen_kwargs_copy:
+                gen_kwargs_copy["num_beams"] = 1
+
+            input_ids_list = [tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt") for prompt in question_input]
+            pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+            input_ids = self.pad_sequence(input_ids_list, batch_first=True, padding_value=pad_token_ids).to(self.device)
+            attention_masks = input_ids.ne(pad_token_ids).to(self.device)
+
+            if task_type == "image":
+                gen_kwargs_copy["image_sizes"] = [flattened_visuals[idx].size for idx in range(len(flattened_visuals))]
+            elif task_type == "video":
+                stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+                keywords = [stop_str]
+                stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
+                gen_kwargs_copy["modalities"] = ["video"]
+                gen_kwargs_copy["stopping_criteria"] = [stopping_criteria]
+                self._config.mm_spatial_pool_stride = self.mm_spatial_pool_stride
+                self._config.mm_spatial_pool_mode = self.mm_spatial_pool_mode
+
+            return input_ids, attention_masks, pad_token_ids, gen_kwargs_copy
+
         def _collate(x):
             # the negative sign on len(toks) sorts descending - this has a few advantages:
             # - time estimates will always be over not underestimates, which is more useful for planning
@@ -314,75 +382,6 @@ class LongVA(lmms):
             # this is safe to assume because the `grouper` object ensures it.
             if "until" in gen_kwargs:
                 gen_kwargs.pop("until")
-
-
-            def build_video(video):
-                video = self._image_processor.preprocess(video, return_tensors="pt")["pixel_values"].half().cuda()
-                image_tensor = [video]
-                return image_tensor
-            
-            def build_input_ids(image_tensor):
-
-                question_input = []
-
-                if image_tensor is not None and len(image_tensor) != 0 and DEFAULT_IMAGE_TOKEN not in context:
-                    """
-                    Three senarios:
-                    1. No image, and there for, no image token should be added.
-                    2. image token is already specified in the context, so we don't need to add it.
-                    3. image token is not specified in the context and there is image inputs, so we need to add it. In this case, we add the image token at the beginning of the context and add a new line.
-                    4. For video tasks, we could add a <image> token or multiple <image> tokens for each frame in the context. This depends on the training strategy and should balance in test to decide which is better
-                    """
-                    if task_type == "image":
-                        image_tokens = [DEFAULT_IMAGE_TOKEN] * len(visual) if isinstance(visual, list) else [DEFAULT_IMAGE_TOKEN]
-                    elif task_type == "video":
-                        image_tokens = [DEFAULT_IMAGE_TOKEN] * len(image_tensor[0]) if self.token_strategy == "multiple" else [DEFAULT_IMAGE_TOKEN]
-
-                    image_tokens = " ".join(image_tokens)
-                    question = image_tokens + "\n" + context
-                else:
-                    question = context
-
-                # This is much safer for llama3, as we now have some object type in it
-                if "llama_3" in self.conv_template:
-                    conv = copy.deepcopy(conv_templates[self.conv_template])
-                else:
-                    conv = conv_templates[self.conv_template].copy()
-                conv.append_message(conv.roles[0], question)
-                conv.append_message(conv.roles[1], None)
-                prompt_question = conv.get_prompt()
-                question_input.append(prompt_question)
-
-
-                # preconfigure gen_kwargs with defaults
-                gen_kwargs_copy = copy.deepcopy(gen_kwargs)
-                if "max_new_tokens" not in gen_kwargs_copy:
-                    gen_kwargs_copy["max_new_tokens"] = 1024
-                gen_kwargs_copy["temperature"] = 0.00001
-                if "do_sample" not in gen_kwargs_copy:
-                    gen_kwargs_copy["do_sample"] = False
-                if "top_p" not in gen_kwargs_copy:
-                    gen_kwargs_copy["top_p"] = None
-                if "num_beams" not in gen_kwargs_copy:
-                    gen_kwargs_copy["num_beams"] = 1
-
-                input_ids_list = [tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt") for prompt in question_input]
-                pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
-                input_ids = self.pad_sequence(input_ids_list, batch_first=True, padding_value=pad_token_ids).to(self.device)
-                attention_masks = input_ids.ne(pad_token_ids).to(self.device)
-
-                if task_type == "image":
-                    gen_kwargs_copy["image_sizes"] = [flattened_visuals[idx].size for idx in range(len(flattened_visuals))]
-                elif task_type == "video":
-                    stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
-                    keywords = [stop_str]
-                    stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
-                    gen_kwargs_copy["modalities"] = ["video"]
-                    gen_kwargs_copy["stopping_criteria"] = [stopping_criteria]
-                    self._config.mm_spatial_pool_stride = self.mm_spatial_pool_stride
-                    self._config.mm_spatial_pool_mode = self.mm_spatial_pool_mode
-
-                return input_ids, attention_masks, pad_token_ids, gen_kwargs_copy
 
             # These steps are not in LLaVA's original code, but are necessary for generation to work
             # TODO: attention to this major generation step...
