@@ -1,13 +1,14 @@
 from typing import List, Tuple
 
-from Levenshtein import distance as levenshtein_distance
 from loguru import logger as eval_logger
 from openai import OpenAI
 import re
+import torch
+from transformers import pipeline
 import yaml
 
-from data.utils_strokerehab import VIDEO_DIR, ACTIVITY_GROUND_TRUTH_PATH
 
+from data.utils_strokerehab import VIDEO_DIR, ACTIVITY_GROUND_TRUTH_PATH
 
 # Evaluation metrics
 SUMMARY_STEPS_METRICS = ["precision", "recall", "f1", "ordering_score", "summary_steps_score"]
@@ -22,41 +23,33 @@ except Exception as e:
     raise e
 
 # Load LLM-as-a-judge
-try:
-    client = OpenAI()
-    cost = 0.0
-    model = "gpt-4o-mini"
-    model_input_cost_per_mil = 0.15
-    model_output_cost_per_mil = 0.60
-    cost_log_freq = 0.0001  # logs cost every 0.01 dollars
+qwen2_llm_judge = None
 
-    def _log_cost(input_tokens, output_tokens):
-        global cost
-        prev_cost = cost
-        cost += (input_tokens * model_input_cost_per_mil + \
-                 output_tokens * model_output_cost_per_mil) / 1e6
-        if int(prev_cost // cost_log_freq) != int(cost // cost_log_freq):
-            eval_logger.info(f"{model}-as-a-judge cost: ${cost:.4f}")
+def _get_completion(prompt: str, 
+                    max_new_tokens: int = 32,
+                    ):
+    global qwen2_llm_judge
+    if not qwen2_llm_judge:
+        torch.cuda.empty_cache()
+        qwen2_llm_judge = pipeline(
+            task="text-generation",
+            model="Qwen/Qwen2-7B-Instruct",
+            torch_dtype=torch.bfloat16,
+            device_map=0
+        )
+    import pdb ; pdb.set_trace()
 
-except Exception as e:
-    print(f"Need API key for OpenAI to run this code. Error: {e}")
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": prompt},
+    ]
 
+    outputs = qwen2_llm_judge(messages,
+                              max_new_tokens=max_new_tokens,
+                              do_sample=False)
 
-def _get_completion(client: OpenAI, 
-                    prompt: str, 
-                    model: str = "gpt-4o-mini", 
-                    max_tokens: int = 32,
-                    temperature: float = 0.0):
-    response = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=max_tokens,
-        temperature=temperature
-    )
     return {
-        "content": response.choices[0].message.content.strip(),
-        "input_tokens": response.usage.prompt_tokens,
-        "output_tokens": response.usage.completion_tokens
+        "content": outputs[0]["generated_text"][-1]['content'],
     }
 
 
@@ -116,10 +109,7 @@ def _get_bipartite_matching(pred_steps: List[str], gt_steps: List[str]) -> List[
             f"QUERY:\n{pred_step_str}"
             f"ACTIONS:\n{numbered_steps_str}\n\n"
         )
-        response = _get_completion(client, prompt, model=model)
-
-        # Log cost
-        _log_cost(response["input_tokens"], response["output_tokens"])
+        response = _get_completion(prompt)
 
         # Create bipartite match graph
         if pred_step_str in cache:

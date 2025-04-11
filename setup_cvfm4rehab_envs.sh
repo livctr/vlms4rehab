@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
+if [ "$1" == "-y" ]; then
+    yes_flag="-y"
+else
+    yes_flag=""
+fi
+
 # This script creates the conda environments `cvfm4rehab_llava`, `cvfm4rehab_vila`, and `cvfm4rehab_longva`.
 
 deactivate_all_conda_envs() {
@@ -14,7 +20,7 @@ conda init
 
 ################################# cvfm4rehab_llava BEGIN ################################
 deactivate_all_conda_envs
-conda create -n cvfm4rehab_llava python=3.10
+conda create -n cvfm4rehab_llava python=3.10 $yes_flag
 conda activate cvfm4rehab_llava
 pip install -e .[metrics]
 pip install deepspeed
@@ -24,7 +30,7 @@ cd LLaVA-NeXT ; pip install -e . ; cd ..
 
 ################################# cvfm4rehab_vila BEGIN ################################
 deactivate_all_conda_envs
-conda create -n cvfm4rehab_vila python=3.10
+conda create -n cvfm4rehab_vila python=3.10 $yes_flag
 conda activate cvfm4rehab_vila
 pip install -e .[metrics]
 
@@ -65,15 +71,17 @@ cd ..
 
 ###################################### cvfm4rehab_longva BEGIN ##########################
 deactivate_all_conda_envs
-conda create -n cvfm4rehab_longva python=3.10
+conda create -n cvfm4rehab_longva python=3.10 $yes_flag
 conda activate cvfm4rehab_longva
 pip install --upgrade pip
 pip install -e .[metrics]
 
+cd LongVA
 pip install torch==2.1.2 torchvision --index-url https://download.pytorch.org/whl/cu118
 pip install -e "longva/.[train]"
 pip install packaging && pip install ninja && pip install flash-attn==2.5.0 --no-build-isolation --no-cache-dir
 pip install -r requirements.txt
+cd ..
 
 # LLaVA
 cd LLaVA-NeXT

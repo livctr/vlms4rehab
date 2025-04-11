@@ -18,8 +18,7 @@
 # Script credits: https://github.com/vision-x-nyu/thinking-in-space/blob/main/evaluate_all_in_one.sh
 
 ############################################## ARGS ##############################################
-export HF_HOME="***REMOVED***"  # comment out if using default
-export OPENAI_API_KEY=""  # only needed for strokerehab_summarization
+export HF_HOME="***REMOVED***"  # location of huggingface cache, comment out if using default
 export HF_TOKEN="***REMOVED***"
 wandb_entity=""  # leave empty if not using wandb
 wandb_project=""
