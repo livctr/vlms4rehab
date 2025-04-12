@@ -10,10 +10,11 @@ Applying modern computer vision foundation models to stroke rehabilitation tasks
 
 git clone https://github.com/livctr/cvfm4rehab.git
 cd cvfm4rehab
-bash ./setup_cvfm4rehab_envs.sh
+git submodule update --init --recursive
+bash ./setup_cvfm4rehab_envs.sh [-y]
 ```
 
-The bash script creates three separate environments `cvfm4rehab_llava`, `cvfm4rehab_vila`, and `cvfm4rehab_longva` for running different models.
+The bash script `./setup_cvfm4rehab_envs.sh` creates three separate environments `cvfm4rehab_llava`, `cvfm4rehab_vila`, and `cvfm4rehab_longva` for running different models. Add the `-y` flag to say "yes to all prompts".
 
 | Environment | Models |
 |-------------|--------|
@@ -21,17 +22,14 @@ The bash script creates three separate environments `cvfm4rehab_llava`, `cvfm4re
 | `cvfm4rehab_vila` | nvila_[8,15]b, longvila_8b |
 | `cvfm4rehab_longva` | longva_7b |
 
-NOTE: longvila_8b, longva_7b not tested yet, longva_7b
-
 **Reproducing the Results**
 
 ```bash
 
-mv evaluate.sh.example evaluate.sh  # MAKE SURE TO fill in appropriate API keys
+mv evaluate.sh.example evaluate.sh
+# Manually fill in appropriate API keys. Fill in sbatch directives if applicable.
 bash evaluate.sh --model all --task strokerehab_summarization,strokerehab_primitives
-
 ```
-
 
 ### Important Files
 
