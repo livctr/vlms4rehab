@@ -21,7 +21,7 @@
 ############################################## ARGS ##############################################
 export HF_HOME=""
 export HF_TOKEN=""
-wandb_entity=""  # leave empty if not using wandb
+wandb_entity=""  # e.g., "cvfm4rehab"  # leave empty if not using wandb
 ##################################################################################################
 
 
@@ -113,6 +113,7 @@ if [ "$models" = "small" ]; then
     IFS=',' read -r -a models <<<"$available_small_models"
 fi
 
+time_str=""
 
 for model in "${models[@]}"; do
     for task in "${tasks[@]}"; do
@@ -127,7 +128,7 @@ for model in "${models[@]}"; do
         "strokerehab_summarization")
             benchmark="$task"
             output_path="${log_path}/${task}"
-            model_task_args=",sampling_strategy=uniform"
+            model_task_args=",sampling_strategy=dense,sampling_fps=1,overlap_frames_num=0"
             wandb_project="$task"
             ;;
         "strokerehab_primitives")
@@ -265,7 +266,33 @@ for model in "${models[@]}"; do
         echo "Command: "
         echo $evaluate_script
         echo "==================================================================="
+
+        # Record start time
+        start_time=$(date +%s)
+        
+        # Run the evaluation
         eval $evaluate_script
+        
+        # Record end time and calculate duration
+        end_time=$(date +%s)
+        duration=$((end_time - start_time))
+        
+        # Format duration in hours:minutes:seconds
+        hours=$((duration / 3600))
+        minutes=$(( (duration % 3600) / 60 ))
+        seconds=$((duration % 60))
+
+        time_str+="$model,$task | $(printf "%02d:%02d:%02d" "$hours" "$minutes" "$seconds")\n"
 
     done
 done
+
+
+echo "==================================================================="
+echo "Evaluation completed for all models and tasks."
+echo "model,task | Time in HH:MM:SS format"
+echo "==================================================================="
+echo -e "$time_str"
+echo "==================================================================="
+echo "All evaluations are done. Check the logs for details."
+echo "==================================================================="
