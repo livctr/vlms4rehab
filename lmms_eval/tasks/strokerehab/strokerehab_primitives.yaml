@@ -1,6 +1,6 @@
 # Load StrokeRehab dataset from local
 dataset_kwargs:
-  use_dataset_builder: !function utils.strokerehab_load_dataset_debug
+  use_dataset_builder: !function utils.strokerehab_load_dataset_S0001_small
 task: "strokerehab_primitives"
 test_split: test
 output_type: generate_until

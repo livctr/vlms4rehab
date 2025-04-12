@@ -25,19 +25,24 @@ except Exception as e:
 # Load LLM-as-a-judge
 qwen2_llm_judge = None
 
+
+def _init_llm_judge():
+    global qwen2_llm_judge
+    torch.cuda.empty_cache()
+    qwen2_llm_judge = pipeline(
+        task="text-generation",
+        model="Qwen/Qwen2-7B-Instruct",
+        torch_dtype=torch.bfloat16,
+        device_map=0
+    )
+
+
 def _get_completion(prompt: str, 
                     max_new_tokens: int = 32,
                     ):
     global qwen2_llm_judge
     if not qwen2_llm_judge:
-        torch.cuda.empty_cache()
-        qwen2_llm_judge = pipeline(
-            task="text-generation",
-            model="Qwen/Qwen2-7B-Instruct",
-            torch_dtype=torch.bfloat16,
-            device_map=0
-        )
-    import pdb ; pdb.set_trace()
+        _init_llm_judge()
 
     messages = [
         {"role": "system", "content": "You are a helpful assistant."},
@@ -53,33 +58,54 @@ def _get_completion(prompt: str,
     }
 
 
-def _parse_summary_results(results: str):
+def _parse_summary_results(results: List[str]) -> List[str]:
     """
-    Expects a numbered list of steps, potentially not separated by newlines.
+    Expects a list of list of steps. Parses them into a list of de-duplicated steps.
 
-    Example input:
-    "
-    1. remove glasses
-    2. wash hands
-    3. apply soap
-    "
+    For example,
+    ```
+    ['- remove glasses\n- wring the washcloth\n- twist the deodorant cap']
+    ```
+
     Parses this into a list of strings. Throws error if format is incorrect.
 
-    Example output: ["remove glasses", "wash hands", "apply soap"]
+    Example output: ["remove glasses", "wring the washcloth", "twist the deodorant cap"]
     """
-    # Remove any leading/trailing whitespace from the input.
-    results = results.strip()
-    
-    # Split the string by a pattern matching one or more digits followed by a dot.
-    parts = re.split(r'\d+\.', results)
+    global qwen2_llm_judge
+    if not qwen2_llm_judge:
+        _init_llm_judge()
 
-    # Remove any empty strings and extra whitespace from each step.
-    steps = []
-    for step in parts:
-        step = step.strip()
-        if step:
-            steps.append(step)
-    return steps
+    # Remove any leading/trailing whitespace from the input.
+    results = [result.split('\n-') for result in results]
+    results = [item for sublist in results for item in sublist]
+    results = [result.strip(" \t\n\r\f\v-") for result in results]
+    if not results:
+        return results
+
+    # De-duplicate the adjacent items in the list using LLM-as-a-judge
+    prompt_pre = (
+        "Answer `yes` if statement 1 and statement 2 are semantically the same, otherwise `no`.\n\n"
+    )
+
+    dedup_results = [results[0]]
+
+    for i in range(1, len(results)):
+        current_step = results[i]
+        last_added_step = dedup_results[-1]
+
+        # Skip empty steps
+        if not current_step:
+            continue
+
+        # Construct prompt to check if current step is the same as the last added step
+        prompt = prompt_pre + f"Statement 1: {last_added_step}\nStatement 2: {current_step}"
+        response = _get_completion(prompt, max_new_tokens=10)
+
+        # Only add the step if it's not a duplicate (response is not "yes")
+        if "yes" not in response["content"].lower():
+            dedup_results.append(current_step)
+
+    return dedup_results
 
 
 def _get_bipartite_matching(pred_steps: List[str], gt_steps: List[str]) -> List[Tuple[int, int]]:
@@ -119,7 +145,7 @@ def _get_bipartite_matching(pred_steps: List[str], gt_steps: List[str]) -> List[
             if response["content"] != "None":
                 try:
                     for x in response["content"].split(","):
-                        x = int(x) - 1
+                        x = int(re.sub(r'[^0-9]', '', x)) - 1
                         if 0 <= x < len(deduped_keys):
                             matches_deduped_idx.append(x)
                         else:
@@ -239,7 +265,16 @@ def sr_summary_doc_to_visual(doc):
 
 def sr_summary_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     prompt = (
-        "Provide a numbered step-by-step breakdown of what the patient does in the video. "
+        "List the actions performed by the patient in the video.\n\n" \
+        "Example Response:\n" \
+        "```\n"
+        "- remove glasses\n" \
+        "- wring the washcloth\n" \
+        "- twist the deodorant cap\n" \
+        "- place cup on table\n" \
+        "- brush teeth\n" \
+        "```\n" \
+        "Often, the list may only be one to three action items long, but can up to 8 items long.\n"
     )
     return prompt
 
@@ -253,7 +288,7 @@ def sr_summary_doc_to_target(doc):
 def sr_summary_process_results(doc, results):
     """Process per-document results into metric format"""
     gt_steps = sr_summary_doc_to_target(doc)
-    pred_steps = _parse_summary_results(results[0])
+    pred_steps = _parse_summary_results(results)
     scores = _get_scores(pred_steps, gt_steps)
     return {
         **doc,

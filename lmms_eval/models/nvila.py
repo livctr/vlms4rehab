@@ -143,6 +143,7 @@ class NVILA(lmms):
                 media_config = defaultdict(dict)
                 generation_config = self.model.default_generation_config
                 generation_config.do_sample = False
+                generation_config.max_new_tokens = 100
 
                 output_ids = self.model.generate(
                     input_ids=input_ids,
