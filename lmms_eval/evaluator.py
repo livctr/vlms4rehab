@@ -1,4 +1,5 @@
 import collections
+import gc
 import inspect
 import itertools
 import json
@@ -469,6 +470,16 @@ def evaluate(
     WORLD_SIZE = lm.world_size
     ### Postprocess outputs ###
     # TODO: del model here, maybe (idea: allow user to specify device of e.g. reward model separately)
+    if hasattr(lm, "_model"):
+        del lm._model
+        torch.cuda.empty_cache()
+        gc.collect()
+    if hasattr(lm, "accelerator"):
+        lm.accelerator.wait_for_everyone()
+        lm.accelerator.free_memory()
+        torch.cuda.empty_cache()
+        gc.collect()
+
     for task_output in eval_tasks:
         task = task_output.task
         task.apply_filters()
@@ -540,10 +551,6 @@ def evaluate(
                 pbar.update(1)
 
             pbar.close()
-
-    if hasattr(lm, "_model"):
-        del lm._model
-        torch.cuda.empty_cache()
 
     if WORLD_SIZE > 1:
         # if multigpu, then gather data across all ranks to rank 0

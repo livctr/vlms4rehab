@@ -1,19 +1,19 @@
 # Load StrokeRehab dataset from local
 dataset_kwargs:
-  use_dataset_builder: !function utils.strokerehab_load_dataset_S0001_small
-task: "strokerehab_summarization"
+  use_dataset_builder: !function utils.strokerehab_load_summarization_data
+task: "strokerehab_movements"
 test_split: test
 output_type: generate_until
-doc_to_visual: !function utils_summarization.sr_summary_doc_to_visual
-doc_to_text: !function utils_summarization.sr_summary_doc_to_text
-doc_to_target: !function utils_summarization.sr_summary_doc_to_target
+doc_to_visual: !function utils_movements.sr_movements_doc_to_visual
+doc_to_text: !function utils_movements.sr_movements_doc_to_text
+doc_to_target: !function utils_movements.sr_movements_doc_to_target
 generation_kwargs:
   max_new_tokens: 200  # Can be increase
   temperature: 0
   top_p: 1.0
   num_beams: 1
   do_sample: true
-process_results: !function utils_summarization.sr_summary_process_results
+process_results: !function utils_movements.sr_movements_process_results
 metric_list:
   - metric: precision
     aggregation: mean

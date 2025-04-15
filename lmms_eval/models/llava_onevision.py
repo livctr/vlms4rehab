@@ -24,7 +24,7 @@ from lmms_eval.models.model_utils.load_video import load_long_video_decord
 warnings.filterwarnings("ignore")
 
 # Configure logging
-eval_logger = logging.getLogger("lmms-eval")
+from loguru import logger as eval_logger
 
 # Enable TF32 for CUDA
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -126,7 +126,7 @@ class Llava_OneVision(lmms):
         overwrite_config = {}
         overwrite_config["mm_spatial_pool_stride"] = self.mm_spatial_pool_stride
         overwrite_config["mm_spatial_pool_mode"] = self.mm_spatial_pool_mode
-        cfg_pretrained = AutoConfig.from_pretrained(self.pretrained)
+        # cfg_pretrained = AutoConfig.from_pretrained(self.pretrained)
 
         llava_model_args["overwrite_config"] = overwrite_config
         try:
@@ -179,6 +179,8 @@ class Llava_OneVision(lmms):
             self.model.to(self._device)
             self._rank = 0
             self._world_size = 1
+        
+        self.accelerator = accelerator
 
     @property
     def config(self):
