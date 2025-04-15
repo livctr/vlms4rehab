@@ -43,7 +43,7 @@ class NVILA(lmms):
         assert conv_template == "auto", "Only auto conversation template is supported now"
 
         # Load model
-        self.model = llava.load(pretrained)
+        self._model = llava.load(pretrained)
 
         # Set conversation mode
         clib.default_conversation = clib.conv_templates[conv_template].copy()
@@ -55,7 +55,7 @@ class NVILA(lmms):
         self.overlap_frames_num = overlap_frames_num
 
         self.video_decode_backend = video_decode_backend
-        # self.model.eval()
+        # self._model.eval()
 
     # @property
     # def config(self):
@@ -135,17 +135,17 @@ class NVILA(lmms):
                 media = {'video': [images]}
                 conversation = [{"from": "human", "value": MEDIA_TOKENS['video'] + contexts}]
                 media['video'] = [process_images(images,
-                                                 self.model.vision_tower.image_processor,
-                                                 self.model.config).half()
+                                                 self._model.vision_tower.image_processor,
+                                                 self._model.config).half()
                                     for images in media['video']]
-                input_ids = tokenize_conversation(conversation, self.model.tokenizer, add_generation_prompt=True).cuda().unsqueeze(0)
+                input_ids = tokenize_conversation(conversation, self._model.tokenizer, add_generation_prompt=True).cuda().unsqueeze(0)
 
                 media_config = defaultdict(dict)
-                generation_config = self.model.default_generation_config
+                generation_config = self._model.default_generation_config
                 generation_config.do_sample = False
                 generation_config.max_new_tokens = 100
 
-                output_ids = self.model.generate(
+                output_ids = self._model.generate(
                     input_ids=input_ids,
                     media=media,
                     media_config=media_config,
@@ -153,7 +153,7 @@ class NVILA(lmms):
                     logits_processor=None,
                 )
 
-                response = self.model.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
+                response = self._model.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
 
                 outputs.append(response)
 

@@ -1,4 +1,3 @@
-import logging
 from typing import List, Tuple
 
 import numpy as np
@@ -17,8 +16,8 @@ from lmms_eval.api.registry import register_model
 
 from lmms_eval.models.model_utils.load_video import load_long_video_decord
 
+from loguru import logger as eval_logger
 
-eval_logger = logging.getLogger("eval_logger")
 
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
@@ -195,8 +194,8 @@ class InternVL2(lmms):
         self,
         pretrained: str = "OpenGVLab/InternVL2_5-26B",
         modality: str = "video",
-        device: str = "cuda",
-        device_map: str = "cuda",
+        device: str = "cuda:0",
+        device_map: str = "cuda:0",
         batch_size: str = "1",
         num_frame: int = 30,
         num_layers=None,
@@ -223,7 +222,7 @@ class InternVL2(lmms):
             self.device_map = f"cuda:{accelerator.local_process_index}"
         elif accelerator.num_processes == 1 and device_map == "auto":
             self._device = torch.device(device)
-            device_map = split_model(pretrained.split("/")[-1], num_layers=num_layers)
+            # device_map = split_model(pretrained.split("/")[-1], num_layers=num_layers)
             self.device_map = device_map
         else:
             self._device = torch.device(f"cuda:{accelerator.local_process_index}")
@@ -368,7 +367,7 @@ class InternVL2(lmms):
                     outputs.append(response)
 
             output_print = "\n".join(outputs)
-            eval_logger.info(f"Response: {output_print}")
+            eval_logger.debug(f"Response: {output_print}")
             res.append(outputs)
             pbar.update(1)
         pbar.close()
@@ -379,14 +378,3 @@ class InternVL2(lmms):
 
     def generate_until_multi_round(self, requests) -> List[str]:
         raise NotImplementedError("TODO: Implement multi-round generation for InternVL2")
-
-
-# def load_video(video_path,
-#                bound=None,
-#                input_size=448,
-#                max_num=1,
-#                max_frames_num=32,
-#                sampling_strategy="uniform",
-#                overlap_frames_num=0,
-#                sampling_fps=8,
-#                force_sample=True

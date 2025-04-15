@@ -40,7 +40,6 @@ def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overla
             eval_logger.info(f"Video has {total_frame_num} frames, less than {max_frames_num}, not sampling")
             frame_idx = np.arange(total_frame_num)
         else:
-            eval_logger.info(f"Sampling {max_frames_num} frames uniformly over {total_frame_num} frames")
             frame_idx = np.linspace(0, total_frame_num - 1, max_frames_num, dtype=int)
         yield ret_fn(frame_idx)
     elif sampling_strategy == "dense":
@@ -49,7 +48,6 @@ def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overla
         start = 0
         while start + (max_frames_num - 1) * sampling_rate < total_frame_num:
             indices = start + np.arange(max_frames_num) * sampling_rate
-            eval_logger.info(f"Yielding {len(indices)} frames [{indices[0]}, {indices[-1]}] of total {total_frame_num} frames")
             yield ret_fn(indices)
             start += step
     else:

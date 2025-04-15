@@ -1,3 +1,4 @@
+import gc
 from typing import List, Tuple
 
 from loguru import logger as eval_logger
@@ -28,13 +29,24 @@ qwen2_llm_judge = None
 
 def _init_llm_judge():
     global qwen2_llm_judge
-    torch.cuda.empty_cache()
-    qwen2_llm_judge = pipeline(
-        task="text-generation",
-        model="Qwen/Qwen2-7B-Instruct",
-        torch_dtype=torch.bfloat16,
-        device_map=0
-    )
+    if qwen2_llm_judge is None:
+        torch.cuda.empty_cache()
+        gc.collect()
+        qwen2_llm_judge = pipeline(
+            task="text-generation",
+            model="Qwen/Qwen2-7B-Instruct",
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+        )
+
+
+def _remove_llm_judge():
+    global qwen2_llm_judge
+    if qwen2_llm_judge is not None:
+        del qwen2_llm_judge
+        torch.cuda.empty_cache()
+        gc.collect()
+        qwen2_llm_judge = None
 
 
 def _get_completion(prompt: str, 
@@ -260,10 +272,10 @@ def _get_scores(pred_steps: List[str], gt_steps: List[str]) -> dict[str, float]:
         "pred2gt_matches": str(greedy_matches_1indexed)
     }
 
-def sr_summary_doc_to_visual(doc):
+def sr_movements_doc_to_visual(doc):
     return [VIDEO_DIR + doc["path_v"]]
 
-def sr_summary_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+def sr_movements_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     prompt = (
         "List the actions performed by the patient in the video.\n\n" \
         "Example Response:\n" \
@@ -278,16 +290,18 @@ def sr_summary_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     )
     return prompt
 
-def sr_summary_doc_to_target(doc):
+def sr_movements_doc_to_target(doc):
     activity = doc["activity"]
     gt_sequence = activity2steps.get(activity, [])
     if not gt_sequence:  # hopefully, doesn't happen?
         raise ValueError("No steps found for activity: ", activity)
     return gt_sequence
 
-def sr_summary_process_results(doc, results):
+def sr_movements_process_results(doc, results):
     """Process per-document results into metric format"""
-    gt_steps = sr_summary_doc_to_target(doc)
+    global qwen2_llm_judge
+
+    gt_steps = sr_movements_doc_to_target(doc)
     pred_steps = _parse_summary_results(results)
     scores = _get_scores(pred_steps, gt_steps)
     return {

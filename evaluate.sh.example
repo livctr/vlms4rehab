@@ -11,37 +11,42 @@
 #SBATCH --mail-type=BEGIN,END,FAIL         # Email on job end (optional)
 #SBATCH --mail-user=  # Your email (optional)
 
+# bash evaluate.sh --model all --task strokerehab_movements,strokerehab_primitives,strokerehab_describe
+# Change to 3 GPUs for next one
+# bash evaluate.sh --model internvl_2p5_78b --task strokerehab_movements,strokerehab_primitives
+
 # Example usage:
 # - `bash evaluate.sh --model llava_ov_0p5b --task strokerehab_primitives`
-# - `bash evaluate.sh --model nvila_8b,nvila_15b --task strokerehab_summarization`
-# - `bash evaluate.sh --model small --task strokerehab_summarization,strokerehab_primitives --num_processes 4`  # runs all small models
-# - `bash evaluate.sh --model all --task strokerehab_summarization,strokerehab_primitives`  # runs all models
+# - `bash evaluate.sh --model nvila_8b,nvila_15b --task strokerehab_movements`
+# - `bash evaluate.sh --model small --task strokerehab_movements,strokerehab_primitives --num_processes 4`  # runs all small models
+# - `bash evaluate.sh --model all --task strokerehab_movements,strokerehab_primitives`  # runs all models
 # Script credits: https://github.com/vision-x-nyu/thinking-in-space/blob/main/evaluate_all_in_one.sh
 
 ############################################## ARGS ##############################################
-export HF_HOME=""
-export HF_TOKEN=""
-wandb_entity=""  # e.g., "cvfm4rehab"  # leave empty if not using wandb
+export HF_HOME="/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/hf_home"
+export HF_TOKEN="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"
+wandb_entity="cvfm4rehab"  #"cvfm4rehab"  # leave empty if not using wandb
 ##################################################################################################
 
 
+num_processes_pre=1
 num_processes=1
 available_models="llava_ov_0p5b,\
 llava_ov_7b,\
 llava_ov_72b,\
 llava_next_video_7b,\
 llava_next_video_72b,\
-internvl2_5_2b,\
-internvl2_5_8b,\
-internvl2_5_38b,\
-internvl2_5_78b,\
+internvl_2p5_2b,\
+internvl_2p5_8b,\
+internvl_2p5_38b,\
+internvl_2p5_78b,\
 longva_7b,\
 nvila_8b,\
 nvila_15b"
 available_small_models="llava_ov_0p5b,\
 llava_ov_7b,\
 llava_next_video_7b,\
-internvl2_5_2b,\
+internvl_2p5_2b,\
 longva_7b,\
 nvila_8b"
 launcher=accelerate
@@ -79,7 +84,7 @@ fi
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --num_processes)
-        num_processes="$2"
+        num_processes_pre="$2"
         shift 2
         ;;
     --model)
@@ -125,7 +130,7 @@ for model in "${models[@]}"; do
 
         wandb_project=""
         case "$task" in
-        "strokerehab_summarization")
+        "strokerehab_movements")
             benchmark="$task"
             output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=1,overlap_frames_num=0"
@@ -135,6 +140,12 @@ for model in "${models[@]}"; do
             benchmark="$task"
             output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=8,overlap_frames_num=0"
+            wandb_project="$task"
+            ;;
+        "strokerehab_describe")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=uniform"
             wandb_project="$task"
             ;;
         *)
@@ -147,28 +158,34 @@ for model in "${models[@]}"; do
         "gemini_1p5_flash")
             model_family="gemini_api"
             model_args="model_version=gemini-1.5-flash,modality=video"
+            num_processes=1
             ;;
         "gemini_1p5_pro_002")
             model_family="gemini_api"
             model_args="model_version=gemini-1.5-pro,modality=video"
+            num_processes=1
             ;;
         "gemini_2p0_flash_exp")
             model_family="gemini_api"
             model_args="model_version=gemini-2.0-flash-exp,modality=video"
+            num_processes=1
             ;;
         "gpt_4o_2024_08_06_f16")
             model_family="gpt4v"
             model_args="model_version=gpt-4o-2024-08-06,modality=video,max_frames_num=16"
+            num_processes=1
             ;;
         "llava_ov_0p5b")
             conda activate cvfm4rehab_llava
             model_family="llava_onevision"
             model_args="pretrained=lmms-lab/llava-onevision-qwen2-0.5b-ov,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=32"
+            num_processes=$num_processes_pre
             ;;
         "llava_ov_7b")
             conda activate cvfm4rehab_llava
             model_family="llava_onevision"
             model_args="pretrained=lmms-lab/llava-onevision-qwen2-7b-ov,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=32"
+            num_processes=$num_processes_pre
             ;;
         "llava_ov_72b")
             conda activate cvfm4rehab_llava
@@ -180,6 +197,7 @@ for model in "${models[@]}"; do
             conda activate cvfm4rehab_llava
             model_family="llava_vid"
             model_args="pretrained=lmms-lab/LLaVA-NeXT-Video-7B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=32"
+            num_processes=$num_processes_pre
             ;;
         "llava_next_video_72b")
             conda activate cvfm4rehab_llava
@@ -187,37 +205,41 @@ for model in "${models[@]}"; do
             model_args="pretrained=lmms-lab/LLaVA-NeXT-Video-72B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=32,device_map=auto"
             num_processes=1
             ;;
-        "internvl2_5_2b")
+        "internvl_2p5_2b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-2B,modality=video,max_frames_num=32"
+            model_args="pretrained=OpenGVLab/InternVL2_5-2B,modality=video,max_frames_num=8"
+            num_processes=$num_processes_pre
             ;;
-        "internvl2_5_8b")
+        "internvl_2p5_8b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-8B,modality=video,max_frames_num=32"
+            model_args="pretrained=OpenGVLab/InternVL2_5-8B,modality=video,max_frames_num=8"
+            num_processes=$num_processes_pre
             ;;
-        "internvl2_5_38b")
+        "internvl_2p5_38b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-38B,modality=video,max_frames_num=32"
+            model_args="pretrained=OpenGVLab/InternVL2_5-38B,modality=video,max_frames_num=8,device_map=auto"
             num_processes=1
             ;;
-        "internvl2_5_78b")
+        "internvl_2p5_78b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-78B,modality=video,max_frames_num=32"
+            model_args="pretrained=OpenGVLab/InternVL2_5-78B,modality=video,max_frames_num=8,device_map=auto"
             num_processes=1
             ;;
         "longva_7b")
             conda activate cvfm4rehab_longva
             model_family="longva"
             model_args="pretrained=lmms-lab/LongVA-7B,video_decode_backend=decord,conv_template=qwen_1_5,model_name=longva_qwen_7b,max_frames_num=32"
+            num_processes=$num_processes_pre
             ;;
         "nvila_8b")
             conda activate cvfm4rehab_vila
             model_family="nvila"
             model_args="pretrained=Efficient-Large-Model/NVILA-8B,video_decode_backend=decord,conv_template=auto,max_frames_num=8"
+            num_processes=$num_processes_pre
             ;;
         "nvila_15b")
             conda activate cvfm4rehab_vila
