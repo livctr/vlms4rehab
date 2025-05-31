@@ -222,31 +222,3 @@ conda remove -n cv_ml_env --all
 ```bash
 ./recreate_cv_env.sh --help
 ```
-
-## Notes for Stroke Rehabilitation Research
-
-This environment includes everything you need for:
-- ✅ **Computer vision** processing with OpenCV
-- ✅ **Deep learning** with PyTorch and CUDA support  
-- ✅ **LLM inference** with Transformers and HuggingFace
-- ✅ **Object detection** with YOLO
-- ✅ **Data analysis** with pandas, matplotlib, seaborn
-- ✅ **Development** with Jupyter notebooks
-
-**Perfect for your `llm_caller.py` script!**
-
-## Support
-
-If you need OpenMMLab packages later, use:
-```bash
-./recreate_openmmlab_env.sh
-```
-
-For issues:
-1. Check the verification script output
-2. Ensure CUDA drivers are installed
-3. Try manual installation method
-
----
-*Environment created without OpenMMLab packages as requested*  
-*Based on analysis from: `/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/naveen/final_pipeline/the_pipeline/openmmlab`* 
