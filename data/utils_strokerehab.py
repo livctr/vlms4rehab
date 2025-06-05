@@ -87,7 +87,7 @@ class LabelUtils:
         return "left" if num_lefts > num_rights else "right"
 
     @staticmethod
-    def convert_labels_to_action_sequence(path, handedness):
+    def convert_labels_to_action_sequence(path, handedness = None):
         """Converts the marker names to a sequence.
         
         E.g.
@@ -97,7 +97,12 @@ class LabelUtils:
         """
         df = pd.read_csv(path)
         times = df['Time_s'].tolist()
-        actions = df['MarkerNames'].tolist()
+        actions = df['MarkerNames']
+        if handedness is None:
+            num_lefts = actions.str.startswith('l_').sum() + actions.str.contains('_l_').sum()
+            num_rights = actions.str.startswith('r_').sum() + actions.str.contains('_r_').sum()
+            handedness = "left" if num_lefts > num_rights else "right"
+        actions = actions.tolist()
         action_seq = []
 
         def deduped_action_append(action):
