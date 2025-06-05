@@ -1,4 +1,0 @@
-- model: llava_vid
-  model_args: "pretrained=lmms-lab/LLaVA-NeXT-Video-7B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=32"
-  wandb_args: "entity=cvfm4rehab,project=cvfm4rehab_summary"
-  output_path: "./logs/llava_vid"
