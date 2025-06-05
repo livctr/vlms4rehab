@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
-from typing import Any
+import random
+from typing import Any, Dict, List
 import numpy as np
 from data.visualization.utils import BoundingBox, Canvas, OptionalSize
 
@@ -7,27 +8,30 @@ import cv2
 import numpy as np
 from typing import Any, Tuple, Dict, Optional
 
-from data.visualization.data_streamer import DataStreamer, DecordVideoStreamer, StaticHorizontalLabelBarStreamer
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgb
+from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
 
+from data.visualization.data_streamer import SizedDataStreamer
 
 class Renderer(ABC):
     """
-    Abstract base class for rendering data from a streamer.
+    Abstract base class for rendering arbitrary data.
     
     The data is rendered onto a canvas within a specified bounding box.
     """
-    def __init__(self, data_streamer: DataStreamer):
-        """
-        Initialize the renderer with a data streamer.
 
-        Parameters:
-        - data_streamer: An instance of DataStreamer that provides the data to render.
+    @property
+    @abstractmethod
+    def expected_size(self) -> OptionalSize:
         """
-        self.data_streamer = data_streamer
+        Abstract property: Subclasses must implement this to return the
+        expected (width, height) in pixels that this renderer ideally targets
+        for rendering its data effectively.
 
-    def compute_size(self) -> OptionalSize:
-        """Get the size required for the data to be rendered. None means no requirements."""
-        return (None, None)
+        This helps in layout calculations to allocate appropriate space.
+        """
+        pass
 
     @abstractmethod
     def render(self, data: Any, bbox: BoundingBox, canvas: Canvas) -> Canvas:
@@ -52,10 +56,8 @@ class BoxRenderer(Renderer):
     Renders a bounding box inside a given bounding box region on a canvas.
     The rendered box is defined by normalized or absolute (x, y, w, h) coordinates.
     """
-
     def __init__(
         self,
-        data_streamer: DataStreamer,
         color: Tuple[int, int, int] = (0, 255, 0),  # Default green
         thickness: int = 2
     ):
@@ -65,13 +67,13 @@ class BoxRenderer(Renderer):
         - color: BGR color of the box.
         - thickness: Border thickness.
         """
-        super().__init__(data_streamer)
+        super().__init__()
         self.default_color = color
         self.default_thickness = thickness
 
-    def compute_size(self) -> OptionalSize:
-        """Bounding box renderer does not occupy fixed space."""
-        return None
+    @property
+    def expected_size(self) -> OptionalSize:
+        return (None, None)  # No fixed size, depends on the canvas
 
     def render(self, data: Any, bbox: BoundingBox, canvas: Canvas) -> Canvas:
         """
@@ -85,6 +87,9 @@ class BoxRenderer(Renderer):
         Returns:
         - The modified canvas.
         """
+        if data is None:
+            return canvas
+
         if not isinstance(data, (tuple, list)) or len(data) != 4:
             raise ValueError("Expected data to be a tuple of (x, y, width, height).")
 
@@ -123,20 +128,20 @@ class COCOKeypoints3DRenderer(Renderer):
 
     def __init__(
         self,
-        data_streamer: DataStreamer,
         figsize: Tuple[int, int] = (4, 4),
         elev: int = 10,
         azim: int = -90,
         confidence_threshold: float = 0.0
     ):
-        super().__init__(data_streamer)
+        super().__init__()
         self.figsize = figsize
         self.elev = elev
         self.azim = azim
         self.confidence_threshold = confidence_threshold
 
-    def compute_size(self) -> OptionalSize:
-        return (None, None)
+    @property
+    def expected_size(self) -> OptionalSize:
+        return (None, None)  # No fixed size, depends on the canvas
 
     def _render_3d_pose(self, pose: np.ndarray) -> np.ndarray:
         fig = plt.figure(figsize=self.figsize)
@@ -170,6 +175,9 @@ class COCOKeypoints3DRenderer(Renderer):
         return img
 
     def render(self, data: Any, bbox: BoundingBox, canvas: Canvas) -> Canvas:
+        if data is None:
+            return canvas
+
         x, y, w, h = bbox
         img = self._render_3d_pose(data)
         if img is None:
@@ -187,7 +195,6 @@ class COCOKeypointsRenderer(Renderer):
 
     def __init__(
         self,
-        data_streamer: DataStreamer,
         color: Tuple[int, int, int] = (0, 255, 0),  # Green in BGR
         radius: int = 3,
         thickness: int = -1,
@@ -215,7 +222,7 @@ class COCOKeypointsRenderer(Renderer):
         - confidence_threshold: Minimum confidence to show a keypoint.
         - assume_normalized: If True/False, forces normalized/pixel input. If None, auto-detects.
         """
-        super().__init__(data_streamer)
+        super().__init__()
         self.color = color
         self.radius = radius
         self.thickness = thickness
@@ -227,9 +234,10 @@ class COCOKeypointsRenderer(Renderer):
         self.font_face = font_face
         self.confidence_threshold = confidence_threshold
         self.assume_normalized = assume_normalized
-    
-    def compute_size(self) -> OptionalSize:
-        return (None, None)  # No fixed size, depends on the frame
+
+    @property
+    def expected_size(self) -> OptionalSize:
+        return (None, None)  # No fixed size, depends on the canvas
 
     def _is_normalized(self, pose: np.ndarray) -> bool:
         # Heuristic: if any keypoint is > 2, it's probably pixel-based
@@ -294,6 +302,9 @@ class COCOKeypointsRenderer(Renderer):
         Returns:
         - Modified canvas.
         """
+        if data is None:
+            return canvas
+
         if isinstance(data, dict):
             for pose in data.values():
                 self._render_pose(pose, canvas, bbox)
@@ -310,26 +321,35 @@ class FrameRenderer(Renderer):
     """
     def __init__(
         self,
-        data_streamer: DecordVideoStreamer | StaticHorizontalLabelBarStreamer,
         interpolation: int = cv2.INTER_LINEAR,
         width: Optional[int] = None,
         height: Optional[int] = None,
+        sized_streamer: Optional[SizedDataStreamer] = None,
     ):
         """
         Parameters:
         - data_streamer: DataStreamer providing video frames.
         - interpolation: Interpolation method used for resizing.
+        - sized_streamer: Optional SizedDataStreamer to provide size hints.
         - width: Optional target width for rendering frames.
         - height: Optional target height for rendering frames.
-        """
-        super().__init__(data_streamer)
-        self.interpolation = interpolation
-        self.width = width
-        self.height = height
 
-    def compute_size(self) -> OptionalSize:
-        return (self.width or self.data_streamer.width,
-                self.height or self.data_streamer.height)
+        Width and height are given preference over the size deduced from the sized streamer.
+        While the width, height, and sized streamer do not need to provide a known size,
+        the size needs to be calculable from the layout.
+        """
+        super().__init__()
+        self._interpolation = interpolation
+        self._width = width
+        self._height = height
+        self._sized_streamer = sized_streamer
+
+    @property
+    def expected_size(self) -> OptionalSize:
+        streamer_width, streamer_height = self._sized_streamer.size
+        width = self._width if self._width is not None else streamer_width
+        height = self._height if self._height is not None else streamer_height
+        return (width, height)
 
     def render(self, data: Any, bbox: BoundingBox, canvas: Canvas) -> Canvas:
         """
@@ -343,6 +363,9 @@ class FrameRenderer(Renderer):
         Returns:
         - The modified canvas.
         """
+        if data is None:
+            return canvas
+
         x, y, w, h = bbox
 
         if not isinstance(data, np.ndarray):
@@ -358,12 +381,12 @@ class FrameRenderer(Renderer):
 
         # Resize while preserving aspect ratio
         fh, fw = frame.shape[:2]
-        target_w = self.width or fw
-        target_h = self.height or fh
+        target_w = self._width or fw
+        target_h = self._height or fh
 
         scale = min(w / fw, h / fh)
         new_w, new_h = int(fw * scale), int(fh * scale)
-        resized = cv2.resize(frame, (new_w, new_h), interpolation=self.interpolation)
+        resized = cv2.resize(frame, (new_w, new_h), interpolation=self._interpolation)
 
         # Compute top-left corner for centering
         offset_x = x + (w - new_w) // 2
@@ -381,7 +404,6 @@ class ProgressRenderer(Renderer):
     """
 
     def __init__(self,
-                 data_streamer: DataStreamer,
                  bar_color: Tuple[int, int, int] = (0, 255, 0),
                  thickness: int = 2):
         """
@@ -391,14 +413,12 @@ class ProgressRenderer(Renderer):
         - bar_color: Color of the moving progress bar (BGR).
         - thickness: Width of the vertical progress bar rectangle.
         """
-        super().__init__(data_streamer)
+        super().__init__()
         self.bar_color = bar_color
         self.thickness = thickness
 
-    def compute_size(self) -> OptionalSize:
-        """
-        Returns the fixed size of the progress bar canvas.
-        """
+    @property
+    def expected_size(self) -> OptionalSize:
         return (None, None)  # No fixed size, depends on the canvas
 
     def render(self, data: Any, bbox: BoundingBox, canvas: Canvas) -> Canvas:
@@ -413,6 +433,9 @@ class ProgressRenderer(Renderer):
         Returns:
         - The modified canvas with progress drawn.
         """
+        if data is None:
+            return canvas
+
         if not isinstance(data, float):
             raise TypeError("ProgressRenderer expects a float between 0.0 and 1.0.")
         if not (-0.05 <= data <= 1.05):  # Allow a little tolerance
@@ -433,16 +456,84 @@ class ProgressRenderer(Renderer):
         cv2.rectangle(canvas, (bar_x1, bar_y1), (bar_x2, bar_y2), self.bar_color, thickness=-1)
 
         return canvas
+    
+
+class HorizontalLabelBarRenderer(Renderer):
+    """Useful for timestep-dependent labels in visualizations."""
+    def __init__(self,
+                 height: int = 20,
+                 color_seed: Optional[int] = None,
+    ) -> None:
+        """
+        :param height: Height of the label bar in pixels.
+        :param color_seed: Optional seed to keep label colors consistent.
+        """
+        super().__init__()
+        self._height = height
+        self._label_bar = None
+        self._color_seed = color_seed if color_seed is not None else 42
+        self._colors = None
+    
+    @property
+    def expected_size(self) -> OptionalSize:
+        return (None, self._height)
+
+    def get_label_colors(n=10):
+        cmap = plt.get_cmap("tab10")
+        return [tuple(int(255 * c) for c in to_rgb(cmap(i))) for i in range(n)]
+
+    def _create_label_bar(self, labels: List[str], bar_height: int, bar_width: int) -> Dict[str, tuple]:
+        """Assign consistent BGR colors to label strings."""
+        unique_labels = sorted(set(labels))
+        n = len(unique_labels)
+        if n > 10:
+            raise ValueError("Too many unique labels for a bar plot (must be ≤ 10).")
+        
+        cmap = plt.get_cmap("tab10")
+        colors = [tuple(int(255 * c) for c in to_rgb(cmap(i))) for i in range(n)]
+        self._colors = {label: colors[i] for i, label in enumerate(unique_labels)}
+        self._label_bar = np.zeros((bar_height, bar_width, 3), dtype=np.uint8)
+
+        total_samples = len(labels)
+        segment_width = float(bar_width) / total_samples
+
+        for i, label in enumerate(labels):
+            color = self._colors[label]
+            start = int(i * segment_width)
+            end = int((i + 1) * segment_width)
+            self._label_bar[:, start:end] = color
+
+    def render(self, data: List[str], bbox: BoundingBox, canvas: Canvas) -> Canvas:
+        """
+        Draw a horizontal label bar within the bounding box on the canvas.
+        Each label's proportion is shown using a unique color.
+
+        :param data: List of label strings.
+        :param bbox: Bounding box (x1, y1, x2, y2) within which to draw the label bar.
+        :param canvas: The image canvas (numpy array) to draw on.
+        :return: The modified canvas.
+        """
+        if data is None:
+            return canvas
+
+        x_offset, y_offset, bar_width, bar_height = bbox
+
+        if bar_width <= 0 or bar_height <= 0:
+            return canvas  # Nothing to draw
+
+        if self._label_bar is None:
+            self._create_label_bar(data, bar_height, bar_width)
+
+        canvas[y_offset:y_offset+bar_height, x_offset:x_offset+bar_width] = self._label_bar
+        return canvas
 
 
 class TextRenderer(Renderer):
     """
     Renders text within a bounding box on an image canvas using OpenCV.
     """
-
     def __init__(
         self,
-        data_streamer: DataStreamer,
         font_face: int = cv2.FONT_HERSHEY_SIMPLEX,
         font_scale: float = 0.5,
         font_color: Tuple[int, int, int] = (0, 0, 0),  # Black (BGR)
@@ -464,7 +555,7 @@ class TextRenderer(Renderer):
         - num_expected_lines: Number of lines expected in the text. Used to estimate height.
         - float_precision: If set, round floats in text to this precision
         """
-        super().__init__(data_streamer)
+        super().__init__()
         self.font_face = font_face
         self.font_scale = font_scale
         self.font_color = font_color
@@ -473,9 +564,8 @@ class TextRenderer(Renderer):
         self.num_expected_lines = num_expected_lines
         self.float_precision = float_precision
 
-    def compute_size(self) -> OptionalSize:
-        """Just horizontal text for now."""
-        # Estimate text size
+    @property
+    def expected_size(self) -> OptionalSize:
         (_, text_h), _ = cv2.getTextSize(
             "test", self.font_face, self.font_scale, self.thickness
         )
@@ -493,8 +583,6 @@ class TextRenderer(Renderer):
         Returns:
         - Modified canvas
         """
-        x, y, w, h = bbox
-
         # If data is a dictionary, extract values; else treat it as text
         if isinstance(data, dict):
             text = data.get("text", "")
@@ -510,8 +598,13 @@ class TextRenderer(Renderer):
             font_color = self.font_color
             thickness = self.thickness
             line_type = self.line_type
+
+        if text is None:
+            return canvas
+
         text = f"{text:.{self.float_precision}f}" if isinstance(text, float) and self.float_precision is not None else str(text)
 
+        x, y, w, h = bbox
         # Estimate text size
         (text_w, text_h), _ = cv2.getTextSize(text, font_face, font_scale, thickness)
 

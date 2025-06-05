@@ -3,18 +3,17 @@ from data.visualization.renderer import (
     COCOKeypoints3DRenderer,
     COCOKeypointsRenderer,
     FrameRenderer,
+    HorizontalLabelBarRenderer,
     ProgressRenderer,
     TextRenderer
 )
 
-from data.visualization.layout import LeafNode, CompositeNode
+from data.visualization.orchestrator import CompositeOrchestrator, LeafOrchestrator, write_to_file
 
 from data.visualization.data_streamer import (
     DecordVideoStreamer,
     ProgressStreamer,
     StaticStreamer,
-    StaticHorizontalLabelBarStreamer,
+    StaticTabularStreamer,
     TabularStreamer,
 )
-
-from data.visualization.annotator import VideoAnnotationWriter

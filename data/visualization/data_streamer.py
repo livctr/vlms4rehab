@@ -10,14 +10,20 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 import decord
 import numpy as np
 import pandas as pd
-import random
+
+from data.visualization.utils import OptionalSize
 
 
-def _build_from_data_source(
+
+def _build_from_data_source_and_validate(
     data_source: pd.DataFrame | str | Dict[str, Iterable],
     data_col: str,
     time_col: str
 ) -> Tuple[List[float], List[Any]]:
+    """Builds a DataFrame from the given data source and validates the specified columns.
+    
+    The length of data source must be at least 1.
+    """
 
     if data_col is None:
         raise ValueError("data_col must be specified.")
@@ -47,11 +53,54 @@ def _build_from_data_source(
 
     timestamps = df[time_col].values
     if len(timestamps) == 0:
-        raise ValueError("Timestamps found to be empty in data.")
+        raise ValueError("Data source must contain at least 1 timestamp.")
     sorted_idx = np.argsort(timestamps)
     timestamps = timestamps[sorted_idx]
     data = df[data_col].values[sorted_idx]
     return timestamps, data
+
+
+def _locate_nearest_idx(ts: float, timestamps: List[float], method: str) -> int:
+    """
+    Locate the index of the nearest timestamp to the given timestamp `ts`.
+
+    Args:
+        ts: The target timestamp to find the nearest index for.
+        timestamps: Sorted list of timestamps.
+        method: Method to use for locating the nearest index. Options are:
+            - "nearest": Select the nearest timestamp to the target time.
+            - "nearest_left": Select the nearest timestamp that is less than or equal to the target time.
+            - "nearest_right": Select the nearest timestamp that is greater than or equal to the target time.
+    """
+    if len(timestamps) == 1:
+        return 0
+
+    data_rate = float(timestamps[-1] - timestamps[0]) / (len(timestamps) - 1)
+    # Initial
+    rough_idx = (ts - timestamps[0]) / data_rate
+    below_idx, above_idx = int(rough_idx), int(rough_idx) + 1
+    if below_idx < 0:
+        below_idx, above_idx = 0, 1
+    elif above_idx >= len(timestamps):
+        below_idx, above_idx = len(timestamps) - 2, len(timestamps) - 1
+    else:
+        while below_idx > 0 and timestamps[below_idx] > ts:
+            below_idx -= 1
+        above_idx = below_idx + 1
+        while above_idx < len(timestamps) - 1 and timestamps[above_idx] < ts:
+            above_idx += 1
+        below_idx = above_idx - 1
+
+    if method == "nearest":
+        idx = below_idx if abs(ts - timestamps[below_idx]) <= abs(ts - timestamps[above_idx]) else above_idx
+    elif method == "nearest_left":
+        idx = below_idx
+    elif method == "nearest_right":
+        idx = above_idx
+    else:
+        raise ValueError(f"Invalid stream_method: {method}. "
+                            "Must be one of 'nearest', 'nearest_left', or 'nearest_right'.")
+    return idx
 
 
 class DataStreamer(ABC):
@@ -71,14 +120,18 @@ class DataStreamer(ABC):
         self._ts: float = None  # Current timestamp in seconds
         self._approx_length: Optional[int] = None
         self.metadata = {}
-        self.time_length: float = None  # Must be set by subclass
-
-    def __post_init__(self) -> None:
-        if self.time_length is None:
-            raise ValueError("Subclasses must set self.time_length in their __init__ method")
 
     @property
-    def approx_length(self) -> Optional[int]:
+    @abstractmethod
+    def time_length(self) -> float:
+        """
+        Abstract property: Subclasses MUST implement this property
+        to return the total duration of the data stream in seconds.
+        """
+        pass
+
+    @property
+    def approx_length(self) -> Union[int, float]:
         return self._approx_length
 
     @property
@@ -121,9 +174,21 @@ class DataStreamer(ABC):
         if self._ts > self.time_length:
             raise StopIteration("Reached end of data stream")
         return self._ts, self.stream()
+    
+
+class SizedDataStreamer(DataStreamer):
+
+    @property
+    @abstractmethod
+    def size(self) -> OptionalSize:
+        """
+        Abstract property: Subclasses of the sized data streamer
+        must return the size as (width, height).
+        """
+        pass
 
 
-class DecordVideoStreamer(DataStreamer):
+class DecordVideoStreamer(SizedDataStreamer):
     """A video frame streamer using the Decord library for efficient video decoding.
     This class provides functionality to stream video frames either by index-based access
     or time-based access. It supports both file paths and pre-initialized Decord VideoReader
@@ -158,9 +223,16 @@ class DecordVideoStreamer(DataStreamer):
             raise ValueError("VideoReader is empty")
 
         self.video_fps = self._video_reader.get_avg_fps()
-        self.time_length = len(self._video_reader) / self.video_fps
         self.height = self._video_reader[0].shape[0]
         self.width = self._video_reader[0].shape[1]
+
+    @property
+    def time_length(self) -> float:
+        return len(self._video_reader) / self.video_fps
+    
+    @property
+    def size(self) -> OptionalSize:
+        return (self.width, self.height)
 
     def stream(self) -> np.ndarray:
         """
@@ -188,9 +260,13 @@ class ProgressStreamer(DataStreamer):
         if streamer is not None and type(streamer.time_length) in [int, float]:
             if streamer.time_length <= 0:
                 raise ValueError("streamer.time_length must be a positive number.")
-            self.time_length = streamer.time_length
+            self._streamer = streamer
         else:
             raise ValueError("streamer must have a valid time_length attribute set.")
+
+    @property
+    def time_length(self) -> float:
+        return self._streamer.time_length
 
     def stream(self) -> float:
         """
@@ -199,61 +275,6 @@ class ProgressStreamer(DataStreamer):
         :return: Current timestamp in seconds.
         """
         return self._ts / self.time_length
-    
-
-class StaticHorizontalLabelBarStreamer(DataStreamer):
-    """Useful for timestep-dependent labels in visualizations."""
-
-    def __init__(self,
-                 data_source: pd.DataFrame | str | Dict[str, Iterable],
-                 data_col: str,
-                 time_col: str,
-                 color_seed: Optional[int] = None,
-    ) -> None:
-        """
-        :param data_source: A pandas DataFrame or source that can be turned into one.
-        :param data_col: The column containing label strings.
-        :param time_col: Optional column indicating time (used to sort).
-        :param time_length: Optional total duration (used to compute frame count).
-        :param color_seed: Optional seed to keep label colors consistent.
-        """
-        super().__init__()
-        self.timestamps, self.data = _build_from_data_source(data_source, data_col, time_col)
-        self.time_length = self.timestamps[-1]
-        self.color_seed = color_seed or 42
-        self.label_colors = self._assign_colors(self.data)
-        self.width, self.height = 400, 20  # Fixed size for the label bar
-        self._label_bar = None
-
-    def _assign_colors(self, labels: list) -> Dict[str, tuple]:
-        """Assign consistent BGR colors to label strings."""
-        unique_labels = sorted(set(labels))
-        if len(unique_labels) > 10:
-            raise ValueError("Too many unique labels for a bar plot (must be ≤ 10).")
-
-        rng = random.Random(self.color_seed)
-        colors = [(rng.randint(0, 255), rng.randint(0, 255), rng.randint(0, 255)) for _ in unique_labels]
-        return dict(zip(unique_labels, colors))
-
-    def stream(self) -> np.ndarray:
-        """
-        Returns a (20, 400, 3) BGR image visualizing label segments over time.
-        """
-        if self._label_bar is None:
-            image = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-            total_samples = len(self.data)
-            segment_width = self.width / total_samples
-
-            for i, label in enumerate(self.data):
-                color = self.label_colors[label]
-                start = int(i * segment_width)
-                end = int((i + 1) * segment_width)
-                image[:, start:end] = color
-            
-            self._label_bar = image
-
-        return self._label_bar
 
 
 class StaticStreamer(DataStreamer):
@@ -266,10 +287,15 @@ class StaticStreamer(DataStreamer):
 
         :param sample_rate: The rate at which to sample data.
         :param value: The fixed value to return on each call.
+        :param time_length: The total duration of the data stream in seconds. Defaults to infinity.
         """
         super().__init__()
-        self.time_length = time_length
+        self._time_length = time_length
         self.value = value
+
+    @property
+    def time_length(self) -> float:
+        return self._time_length
 
     def stream(self) -> Any:
         """
@@ -280,6 +306,53 @@ class StaticStreamer(DataStreamer):
         if self.time_length is not None and self._ts > self.time_length:
             raise StopIteration("Reached time limit for static data stream.")
         return self.value
+    
+
+class StaticTabularStreamer(DataStreamer):
+    """A static tabular data streamer that returns the fixed table per call."""
+    def __init__(self,
+                 data_source: pd.DataFrame | str | Dict[str, Iterable],
+                 data_col: str,
+                 time_col: str,
+                 num_samples: Optional[int] = None,
+                 time_length: float = float('inf'),
+                 subsample_method: str = "nearest"
+    ) -> None:
+        """ 
+        Initialize TabularStreamer with the specified data source.
+
+        :param data_source: Source of tabular data
+        :param data_col: Column name containing the data to stream
+        :param time_col: Column name containing timestamps, if any
+        :param num_samples: If specified, subsample the data uniformly to this number of samples.
+            Otherwise, use all data points.
+        :param time_length: The total duration of the data stream in seconds. Defaults to infinity.
+        :param subsample_method: Method to stream data, either "nearest", "nearest_left", or "nearest_right".
+        """
+        super().__init__()
+        timestamps, data = _build_from_data_source_and_validate(data_source, data_col, time_col)
+
+        time_samples = np.linspace(timestamps[0], timestamps[-1], num_samples) if num_samples else timestamps
+        subsampled_data = []
+        for time_sample in time_samples:
+            idx = _locate_nearest_idx(time_sample, timestamps, subsample_method)
+            subsampled_data.append(data[idx])
+        self._subsampled_data = subsampled_data
+        self._time_length = time_length
+
+    @property
+    def time_length(self) -> float:
+        return self._time_length
+
+    def stream(self) -> Any:
+        """
+        Return the first data point in the static tabular data.
+
+        :return: The first data point.
+        """
+        if self.time_length is not None and self._ts > self.time_length:
+            raise StopIteration("Reached time limit for static tabular data stream.")
+        return self._subsampled_data  # return all data points as a list
 
 
 class TabularStreamer(DataStreamer):
@@ -292,6 +365,7 @@ class TabularStreamer(DataStreamer):
                  data_source: pd.DataFrame | str | Dict[str, Iterable],
                  data_col: str,
                  time_col: str,
+                 stream_method: str = "nearest"
     ) -> None:
         """
         Initialize TabularStreamer with the specified data source.
@@ -299,10 +373,18 @@ class TabularStreamer(DataStreamer):
         :param data_source: Source of tabular data
         :param data_col: Column name containing the data to stream
         :param time_col: Column name containing timestamps, if any
+        :param stream_method: Method to stream data, either "nearest", "nearest_left", or "nearest_right".
         """
         super().__init__()
-        self._timestamps, self._data = _build_from_data_source(data_source, data_col, time_col)
-        self.time_length = self._timestamps[-1]
+        self._timestamps, self._data = _build_from_data_source_and_validate(data_source, data_col, time_col)
+        self._stream_method = stream_method.lower()
+        if self._stream_method not in ["nearest", "nearest_left", "nearest_right"]:
+            raise ValueError(f"Invalid stream_method: {self._stream_method}. "
+                             "Must be one of 'nearest', 'nearest_left', or 'nearest_right'.")
+
+    @property
+    def time_length(self) -> float:
+        return self._timestamps[-1]
 
     def stream(self) -> Any:
         """
@@ -311,19 +393,12 @@ class TabularStreamer(DataStreamer):
         :return: data at the specified timestamp.
         :raises StopIteration: When reaching end of data stream
         """
-        idx = round(self._ts / self._sample_rate)
-
-        if 0 <= idx < len(self._timestamps):
-            while idx > 0 and \
-                abs(self._timestamps[idx-1] - self._ts) < abs(self._timestamps[idx] - self._ts):
-                idx -= 1
-            while idx < len(self._data) - 1 and \
-                abs(self._timestamps[idx+1] - self._ts) < abs(self._timestamps[idx] - self._ts):
-                idx += 1
-
-        try:
+        if self._timestamps[0] <= self._ts <= self._timestamps[-1]:
+            idx = _locate_nearest_idx(self._ts, self._timestamps, self._stream_method)
             return self._data[idx]
-        except IndexError:
-            if idx < 0:
-                raise ValueError(f"Negative index {idx} unexpected and out of bounds.")
-            raise StopIteration(f"Reached end of tabular data stream with timestamp {self._ts} and index {idx}")
+        else:
+            if self._ts < 0:
+                raise ValueError(f"Negative timestamp {self._ts} unexpected and out of bounds.")
+            if self._ts > self._timestamps[-1]:
+                raise StopIteration(f"Reached end of tabular data stream with timestamp {self._ts}")
+            return None  # No data available for this timestamp
