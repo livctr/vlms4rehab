@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from data.utils import ensure_dir_exists
 from data.time_alignment.aligner import Aligner, TimeAligner
-from data.time_alignment.data_iterator import DecordVideoIterator, PandasIterator
+from data.visualization.data_streamer import DecordVideoIterator, PandasIterator
 
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 

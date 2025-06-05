@@ -4,7 +4,7 @@ import subprocess
 import numpy as np
 import pandas as pd
 from data.utils_strokerehab import DataPaths
-from visualization.viz import annotate_video_with_labels
+from data.viz import annotate_video_with_labels
 
 import cv2
 
