@@ -21,7 +21,7 @@ def write_video_with_label(title_str, video_path, label_path, output_path, fps):
     handedness = LabelUtils.get_handedness(label_path)
     action_seq = LabelUtils.convert_labels_to_action_sequence(label_path)
     action_seq = {"Time_s": [action[0] for action in action_seq],
-                  "MarkerNames": [f"Label: {action[1]} ({handedness} hand)"  for action in action_seq]}
+                  "MarkerNames": [f"Label ({handedness} hand): {action[1]}"  for action in action_seq]}
     print(action_seq)
     # Create text nodes for title and labels with larger font
     title = LeafOrchestrator(
@@ -71,6 +71,6 @@ if __name__ == "__main__":
     sample_rate = 1.0 / fps
     video_path = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoData/rawVideosADLsandFM/C00011/C00011_brushing1_1.mkv"
     label_path = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/rawVideoLabels/C00011/C00011_brushing1_1.csv"
-    output_path = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/video_n_labels/test.mp4"
+    output_path = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/AnnotatedVideoData/VideosWithLabels/test.mp4"
 
     write_video_with_label("C00011 Brushing 1", video_path, label_path, output_path, fps)

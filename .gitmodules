@@ -8,6 +8,3 @@
 [submodule "VILA"]
 	path = VILA
 	url = https://github.com/NVlabs/VILA.git
-[submodule "ultralytics"]
-	path = ultralytics
-	url = https://github.com/ultralytics/ultralytics.git

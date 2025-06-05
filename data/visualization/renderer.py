@@ -478,10 +478,6 @@ class HorizontalLabelBarRenderer(Renderer):
     def expected_size(self) -> OptionalSize:
         return (None, self._height)
 
-    def get_label_colors(n=10):
-        cmap = plt.get_cmap("tab10")
-        return [tuple(int(255 * c) for c in to_rgb(cmap(i))) for i in range(n)]
-
     def _create_label_bar(self, labels: List[str], bar_height: int, bar_width: int) -> Dict[str, tuple]:
         """Assign consistent BGR colors to label strings."""
         unique_labels = sorted(set(labels))
@@ -491,6 +487,7 @@ class HorizontalLabelBarRenderer(Renderer):
         
         cmap = plt.get_cmap("tab10")
         colors = [tuple(int(255 * c) for c in to_rgb(cmap(i))) for i in range(n)]
+        colors = [tuple(reversed(color)) for color in colors]  # Convert RGB to BGR
         self._colors = {label: colors[i] for i, label in enumerate(unique_labels)}
         self._label_bar = np.zeros((bar_height, bar_width, 3), dtype=np.uint8)
 
