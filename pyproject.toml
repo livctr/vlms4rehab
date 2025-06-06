@@ -75,6 +75,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tools = [
+    "tqdm",  # Begin MotionAGFormer requirements
+    "easydict",
+    "matplotlib",
+    "torchprofile",
+    "smplx",
+    "scipy",
+    "numba",
+    "scikit-image",
+    "filterpy",
+    "yacs",  # End MotionAGFormer requirements
+]
 metrics = [
     "Levenshtein",
 ]
