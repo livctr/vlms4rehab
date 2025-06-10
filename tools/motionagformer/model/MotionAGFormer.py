@@ -4,10 +4,10 @@ import torch
 from torch import nn
 from timm.models.layers import DropPath
 
-from motionagformer.model.modules.attention import Attention
-from motionagformer.model.modules.graph import GCN
-from motionagformer.model.modules.mlp import MLP
-from motionagformer.model.modules.tcn import MultiScaleTCN
+from tools.motionagformer.model.modules.attention import Attention
+from tools.motionagformer.model.modules.graph import GCN
+from tools.motionagformer.model.modules.mlp import MLP
+from tools.motionagformer.model.modules.tcn import MultiScaleTCN
 
 
 class AGFormerBlock(nn.Module):

@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import random
 from typing import Any, Dict, List
 import numpy as np
 from data.visualization.utils import BoundingBox, Canvas, OptionalSize
@@ -77,11 +76,13 @@ class BoxRenderer(Renderer):
 
     def render(self, data: Any, bbox: BoundingBox, canvas: Canvas) -> Canvas:
         """
-        Renders a bounding box relative to the given bounding box area.
+        Renders bounding boxes relative to the given bounding box area.
+        Assumes the provided bounding box is generate.
 
         Parameters:
-        - data: A tuple (x, y, w, h), normalized (0–1) or absolute.
-        - bbox: The parent bounding box (x0, y0, w0, h0) within which to render.
+        - data: A list of dicts with keys: "box", "score", "id", "text_label".
+                "box" is (x1, y1, x2, y2), normalized or absolute.
+        - bbox: The parent bounding box (x1, y1, x2, y2).
         - canvas: The image to draw on.
 
         Returns:
@@ -90,35 +91,58 @@ class BoxRenderer(Renderer):
         if data is None:
             return canvas
 
-        if not isinstance(data, (tuple, list)) or len(data) != 4:
-            raise ValueError("Expected data to be a tuple of (x, y, width, height).")
+        if not isinstance(data, list):
+            raise ValueError("Expected data to be a list of dictionaries.")
 
-        x0, y0, w0, h0 = bbox
-        x, y, w, h = data
+        x01, y01, x02, y02 = bbox
+        w0 = x02 - x01
+        h0 = y02 - y01
 
-        # Determine if normalized (all values between 0 and 1)
-        is_normalized = all(0.0 <= v <= 1.0 for v in (x, y, w, h))
+        for entry in data:
+            box = entry.get("box")
+            if box is None:
+                continue
 
-        if is_normalized:
-            x = int(x * w0)
-            y = int(y * h0)
-            w = int(w * w0)
-            h = int(h * h0)
-        else:
-            x = int(x)
-            y = int(y)
-            w = int(w)
-            h = int(h)
+            if not isinstance(box, (tuple, list)) or len(box) != 4:
+                raise ValueError("Each 'box' must be a tuple of (x1, y1, x2, y2).")
 
-        # Offset by parent bbox
-        x1 = x0 + x
-        y1 = y0 + y
-        x2 = x1 + w
-        y2 = y1 + h
+            x1, y1, x2, y2 = box
+            is_normalized = all(0.0 <= v <= 1.0 for v in (x1, y1, x2, y2))
 
-        # Draw the rectangle
-        cv2.rectangle(canvas, (x1, y1), (x2, y2), self.default_color, self.default_thickness)
+            if not is_normalized:
+                x1 = float(x1) / w0
+                y1 = float(y1) / h0
+                x2 = float(x2) / w0
+                y2 = float(y2) / h0
+            
+            x1 = int(x01 + x1 * w0)
+            y1 = int(y01 + y1 * h0)
+            x2 = int(x01 + x2 * w0)
+            y2 = int(y01 + y2 * h0)
+
+            # Draw bounding box
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), self.default_color, self.default_thickness)
+
+            # Prepare annotation text
+            label_parts = []
+            if "text_label" in entry:
+                label_parts.append(f"{entry['text_label']} ")
+            if "id" in entry:
+                label_parts.append(f"id:{entry['id']}")
+            if "score" in entry:
+                label_parts.append(f"{entry['score']:.2f}")
+            label = " ".join(label_parts)
+
+            if label:
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 0.5
+                thickness = 1
+                # text_size = cv2.getTextSize(label, font, font_scale, thickness)[0]
+                text_origin = (x1, y1 - 5 if y1 - 5 > 10 else y1 + 15)
+                cv2.putText(canvas, label, text_origin, font, font_scale, self.default_color, thickness, lineType=cv2.LINE_AA)
+
         return canvas
+
 
 
 class COCOKeypoints3DRenderer(Renderer):

@@ -1,3 +1,4 @@
+import logging
 from typing import Tuple, List, Optional
 import numpy as np
 
@@ -9,9 +10,6 @@ Canvas = np.ndarray
 Layout = List[Tuple[str, BoundingBox]]
 OptionalSize = Tuple[Optional[int], Optional[int]]  # (width, height)
 Size = Tuple[int, int]  # (width, height)
-
-
-import logging
 
 logger = logging.getLogger("video_visualization")
 logger.setLevel(logging.INFO)

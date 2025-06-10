@@ -14,50 +14,80 @@ import pandas as pd
 from data.visualization.utils import OptionalSize
 
 
-
-def _build_from_data_source_and_validate(
-    data_source: pd.DataFrame | str | Dict[str, Iterable],
+def _load_and_validate_data_source(
+    data_source: Union[pd.DataFrame, str, Dict[str, Any]],
     data_col: str,
     time_col: str
 ) -> Tuple[List[float], List[Any]]:
-    """Builds a DataFrame from the given data source and validates the specified columns.
-    
-    The length of data source must be at least 1.
     """
+    Loads time-series data from various formats and validates required columns.
 
-    if data_col is None:
-        raise ValueError("data_col must be specified.")
-    if time_col is None:
-        raise ValueError("time_col must be specified if data_source is not a DataFrame with a time index.")
+    Args:
+        data_source: Data in the form of a DataFrame, file path (CSV, NPZ, JSON), or a dict.
+        data_col: Name of the column containing data values.
+        time_col: Name of the column containing timestamps.
 
-    # Load data based on type
+    Returns:
+        A tuple of (sorted_timestamps, sorted_data), both as lists.
+
+    Raises:
+        ValueError: If columns are missing or data is empty.
+        TypeError: If the data_source type is not supported.
+    """
+    if not data_col:
+        raise ValueError("`data_col` must be specified.")
+    if not time_col:
+        raise ValueError("`time_col` must be specified.")
+
+    def sort_by_time(timestamps: Iterable, values: Iterable):
+        if len(timestamps) == 0:
+            raise ValueError("Data source must contain at least 1 timestamp.")
+        sort_idx = np.argsort(timestamps)
+        timestamps = [timestamps[i] for i in sort_idx]
+        values = [values[i] for i in sort_idx]
+        return timestamps, values
+
     if isinstance(data_source, pd.DataFrame):
-        df = data_source
-    elif isinstance(data_source, str):
-        data_source = Path(data_source)
-        if data_source.suffix.lower() == ".csv":
-            df = pd.read_csv(data_source)
-        elif data_source.suffix.lower() == ".npz":
-            npz = np.load(data_source, allow_pickle=True)
-            df = pd.DataFrame({key: npz[key] for key in npz.files if key in [data_col, time_col]})
-        else:
-            raise ValueError(f"Unsupported file format: {data_source.suffix}")
-    elif isinstance(data_source, dict):
-        df = pd.DataFrame({key: pd.Series(value) for key, value in data_source.items() if key in [data_col, time_col]})
-    else:
-        raise TypeError("Unsupported data_source type.")
-    if data_col not in df.columns:
-        raise ValueError(f"'{data_col}' not found in columns: {df.columns}")
-    if time_col and time_col not in df.columns:
-        raise ValueError(f"'{time_col}' not found in columns: {df.columns}")
+        if time_col not in data_source.columns or data_col not in data_source.columns:
+            raise ValueError(f"Missing required columns in DataFrame: {time_col}, {data_col}")
+        return sort_by_time(data_source[time_col], data_source[data_col])
 
-    timestamps = df[time_col].values
-    if len(timestamps) == 0:
-        raise ValueError("Data source must contain at least 1 timestamp.")
-    sorted_idx = np.argsort(timestamps)
-    timestamps = timestamps[sorted_idx]
-    data = df[data_col].values[sorted_idx]
-    return timestamps, data
+    elif isinstance(data_source, str):
+        path = Path(data_source)
+        if not path.exists():
+            raise FileNotFoundError(f"File not found: {data_source}")
+
+        if path.suffix.lower() == ".csv":
+            df = pd.read_csv(path)
+            if time_col not in df.columns or data_col not in df.columns:
+                raise ValueError(f"Missing required columns in CSV: {time_col}, {data_col}")
+            return sort_by_time(df[time_col], df[data_col])
+
+        elif path.suffix.lower() == ".npz":
+            npz = np.load(path, allow_pickle=True)
+            if time_col not in npz or data_col not in npz:
+                raise ValueError(f"Missing keys in NPZ: {time_col}, {data_col}")
+            return sort_by_time(npz[time_col], npz[data_col])
+
+        elif path.suffix.lower() == ".json":
+            import json
+            with open(path, 'r') as f:
+                data_dict = json.load(f)
+            if time_col not in data_dict or data_col not in data_dict:
+                raise ValueError(f"Missing keys in JSON: {time_col}, {data_col}")
+            return sort_by_time(data_dict[time_col], data_dict[data_col])
+
+        else:
+            raise ValueError(f"Unsupported file format: {path.suffix}")
+
+    elif isinstance(data_source, dict):
+        if time_col not in data_source or data_col not in data_source:
+            raise ValueError(f"Missing keys in dict: {time_col}, {data_col}")
+        return sort_by_time(data_source[time_col], data_source[data_col])
+
+    else:
+        raise TypeError(f"Unsupported data_source type: {type(data_source).__name__}")
+
 
 
 def _locate_nearest_idx(ts: float, timestamps: List[float], method: str) -> int:
@@ -119,7 +149,6 @@ class DataStreamer(ABC):
         self._sample_rate: Optional[int] = None
         self._ts: float = None  # Current timestamp in seconds
         self._approx_length: Optional[int] = None
-        self.metadata = {}
 
     @property
     @abstractmethod
@@ -133,6 +162,11 @@ class DataStreamer(ABC):
     @property
     def approx_length(self) -> Union[int, float]:
         return self._approx_length
+    
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        """Metadata about the video stream."""
+        return {}
 
     @property
     def sample_rate(self) -> Optional[float]:
@@ -234,6 +268,18 @@ class DecordVideoStreamer(SizedDataStreamer):
     def size(self) -> OptionalSize:
         return (self.width, self.height)
 
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        """Metadata about the video stream."""
+        return {
+            "decord_version": decord.__version__,
+            "fps": self.video_fps,
+            "frame_width": self.width,
+            "frame_height": self.height,
+            "total_frames": len(self._video_reader),
+            "sample_rate": self.sample_rate if self.sample_rate is not None else "None"
+        }
+
     def stream(self) -> np.ndarray:
         """
         Get the frame closest to the current timestamp.
@@ -330,7 +376,7 @@ class StaticTabularStreamer(DataStreamer):
         :param subsample_method: Method to stream data, either "nearest", "nearest_left", or "nearest_right".
         """
         super().__init__()
-        timestamps, data = _build_from_data_source_and_validate(data_source, data_col, time_col)
+        timestamps, data = _load_and_validate_data_source(data_source, data_col, time_col)
 
         time_samples = np.linspace(timestamps[0], timestamps[-1], num_samples) if num_samples else timestamps
         subsampled_data = []
@@ -376,7 +422,7 @@ class TabularStreamer(DataStreamer):
         :param stream_method: Method to stream data, either "nearest", "nearest_left", or "nearest_right".
         """
         super().__init__()
-        self._timestamps, self._data = _build_from_data_source_and_validate(data_source, data_col, time_col)
+        self._timestamps, self._data = _load_and_validate_data_source(data_source, data_col, time_col)
         self._stream_method = stream_method.lower()
         if self._stream_method not in ["nearest", "nearest_left", "nearest_right"]:
             raise ValueError(f"Invalid stream_method: {self._stream_method}. "
