@@ -8,6 +8,3 @@
 [submodule "VILA"]
 	path = VILA
 	url = https://github.com/NVlabs/VILA.git
-[submodule "MotionAGFormerorg"]
-	path = MotionAGFormerorg
-	url = https://github.com/TaatiTeam/MotionAGFormer.git
