@@ -157,10 +157,8 @@ class GroundingDINOInferencer:
         max_age = int(max_age_s / sample_rate)
         min_hits = int(min_hit_s / sample_rate)
 
-
         prompts = [p if p.endswith('.') else p + '.' for p in texts]
         labels = set(prompts)  # the prompts are the labels
-        trackers = {label: Sort(max_age=max_age, min_hits=min_hits) for label in labels}
 
         video_results = {
             "metadata": {
@@ -176,6 +174,7 @@ class GroundingDINOInferencer:
         }
 
         from tqdm import tqdm
+        trackers = {label: Sort(max_age=max_age, min_hits=min_hits) for label in labels}
         for ts, frame in tqdm(streamer):
 
             video_results['Time_s'].append(round(ts, 3))

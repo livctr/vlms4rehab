@@ -54,15 +54,15 @@ http://localhost:${FRONTEND_PORT}
 
 source ~/.bashrc
 conda init
-cd /gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/explore/grounding_dino
+cd "$(pwd)"
 conda activate sam2
 
 # Start the backend in the background and store its PID
 echo "Starting backend on ${NODE}:${FLASK_PORT}"
-cd backend/server/
-python app.py --port ${FLASK_PORT} --ip ${NODE} &
+python -m data.pipeline.backend.server.app --port ${FLASK_PORT} --ip ${NODE} &
 BACKEND_PID=$!
 cd ../..
+
 
 # Wait until the backend port is open (using netcat)
 while ! nc -z ${NODE} ${FLASK_PORT}; do
@@ -72,13 +72,12 @@ done
 
 # Now start the frontend
 echo "Starting frontend on ${NODE}:${FRONTEND_PORT}"
-cd frontend
+cd data/pipeline/frontend
 HOST=${NODE} PORT=${FRONTEND_PORT} npm start &
 FRONTEND_PID=$!
-cd ..
+cd ../../..
 
 echo "Set up complete. Connect!"
 
 # Wait for both processes to finish
 wait $BACKEND_PID $FRONTEND_PID
-
