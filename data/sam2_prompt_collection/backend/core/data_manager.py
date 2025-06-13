@@ -2,6 +2,7 @@ import decord
 import logging
 import json
 import os
+from typing import Optional
 
 from data.utils_strokerehab import (
     HUMAN_INPUT_JSON_PATH,
@@ -23,17 +24,15 @@ class DataManager:
     def __init__(self, storage_path: str = HUMAN_INPUT_JSON_PATH,
                  annotation_frequency_s: float = 5,
                  sampling_fps: int = 8,
-                 kwargs=None):
+                 dataset_kwargs: Optional[dict] = None):
         """
         `annotation_frequency_s` is the frequency of annotation in seconds.
         """
 
         # hardcode the dataset as the one in strokerehab dataset
         # has `path_v` for video path and `duration_s` for video duration, `fps` for video fps
-        if kwargs is None:
-            self.dataset = strokerehab_load_dataset(filter_for_testset=True)
-        else:
-            self.dataset = strokerehab_load_dataset(**kwargs)
+        dataset_kwargs = dataset_kwargs or {"filter_for_testset": True}
+        self.dataset = strokerehab_load_dataset(**dataset_kwargs)
         if 'test' in self.dataset:
             self.dataset = self.dataset['test']
 
