@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
-from data.pipeline.backend.core.hand_predictor import HandPredictor
-from data.pipeline.backend.core.data_manager import DataManager
-from data.pipeline.backend.core.collection_api import CollectionAPI
+from data.sam2_prompt_collection.backend.core.hand_predictor import HandPredictor
+from data.sam2_prompt_collection.backend.core.data_manager import DataManager
+from data.sam2_prompt_collection.backend.core.collection_api import CollectionAPI
 
 import base64
 import io

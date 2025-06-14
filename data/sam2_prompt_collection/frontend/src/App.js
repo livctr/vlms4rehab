@@ -106,13 +106,15 @@ function App() {
 
   // When a bounding box is clicked, update the selected index
   const handleBoxClick = (index) => {
-    // If already selected as left hand, deselect it
+    // If already selected as left hand, switch to right hand
     if (index === selectedLeftHandIdx) {
       setSelectedLeftHandIdx(-1);
+      setSelectedRightHandIdx(index);
     }
-    // If already selected as right hand, deselect it
+    // If already selected as right hand, switch to left hand
     else if (index === selectedRightHandIdx) {
       setSelectedRightHandIdx(-1);
+      setSelectedLeftHandIdx(index);
     }
     // If not selected, toggle between left and right hand selection
     else {

@@ -8,8 +8,8 @@ import numpy as np
 
 from tqdm import tqdm
 
-from data.pipeline.backend.core.hand_predictor import HandPredictor, HandDetectionError
-from data.pipeline.backend.core.data_manager import DataManager
+from data.sam2_prompt_collection.backend.core.hand_predictor import HandPredictor, HandDetectionError
+from data.sam2_prompt_collection.backend.core.data_manager import DataManager
 
 class CollectionAPI:
     def __init__(self,

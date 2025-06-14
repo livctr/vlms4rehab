@@ -59,7 +59,7 @@ conda activate sam2
 
 # Start the backend in the background and store its PID
 echo "Starting backend on ${NODE}:${FLASK_PORT}"
-python -m data.pipeline.backend.server.app --port ${FLASK_PORT} --ip ${NODE} &
+python -m data.sam2_prompt_collection.backend.server.app --port ${FLASK_PORT} --ip ${NODE} &
 BACKEND_PID=$!
 cd ../..
 
@@ -72,7 +72,7 @@ done
 
 # Now start the frontend
 echo "Starting frontend on ${NODE}:${FRONTEND_PORT}"
-cd data/pipeline/frontend
+cd data/sam2_prompt_collection/frontend
 HOST=${NODE} PORT=${FRONTEND_PORT} npm start &
 FRONTEND_PID=$!
 cd ../../..
