@@ -1,3 +1,4 @@
+checkpoint/
 logs/
 media/
 nbs/
@@ -7,6 +8,9 @@ evaluate.sh
 *.pt
 data_collection_ui.sbatch
 data_collection_auto.sbatch
+test_images/
+test_images_out/
+test_videos_out/
 
 # For data pipeline
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.

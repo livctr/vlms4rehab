@@ -112,7 +112,7 @@ def write_video_with_bbox(title_str, video_path, label_path, detections_path, ou
     bbox = LeafOrchestrator(
         "bbox",
         # timestamps
-        TabularStreamer(detections_path, "Boxes", "Time_s", stream_method="nearest"),
+        TabularStreamer(detections_path, "detections", "times", stream_method="nearest"),
         BoxRenderer(
             color=(0, 255, 0),  # Green
             thickness=2
@@ -183,7 +183,8 @@ if __name__ == "__main__":
         try:
             video_name = test_video_path.split('/')[-1].split('.')[0]
             output_path = f"./test_videos_out/detection_example_{video_name}.mp4"
-            detections_path = f"./test_videos_out/gd_with_cropping_{video_name}.json"
+            detections_path = "./detection_results_crop.json"
+            # detections_path = f"./test_videos_out/gd_with_cropping_{video_name}.json"
             write_video_with_bbox(video_name, test_video_path, test_label_path, detections_path, output_path, fps)
             print(f"Write success for {test_video_path}!")
         except Exception as e:

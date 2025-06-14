@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify
-from data.pipeline.backend.core.hand_predictor import HandPredictor
-from data.pipeline.backend.core.data_manager import DataManager
-from data.pipeline.backend.core.collection_api import CollectionAPI
+from data.sam2_prompt_collection.backend.core.hand_predictor import HandPredictor
+from data.sam2_prompt_collection.backend.core.data_manager import DataManager
+from data.sam2_prompt_collection.backend.core.collection_api import CollectionAPI
 
 import base64
 import io
@@ -39,15 +39,15 @@ def get_data():
     except Exception as e:
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
-# Endpoint to select a hand bounding box
-@app.route("/api/select_hand_bbox", methods=["POST"])
-def select_hand_bbox():
+# Endpoint to select hand bounding boxes
+@app.route("/api/select_hands", methods=["POST"])
+def select_hands():
     if not collection_api:
         return jsonify({"error": "Collection API not initialized"}), 500
     
     try:
         human_input = request.json
-        collection_api.select_hand_bbox(human_input)
+        collection_api.select_hands(human_input)
         return collection_api.get_data("next")
     except Exception as e:
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
@@ -73,35 +73,71 @@ if __name__ == '__main__':
     parser.add_argument('--ip', type=str, help='IP address to bind the Flask app to')
     parser.add_argument('--dino_model_id', type=str, default="IDEA-Research/grounding-dino-base", 
                         help='Model ID for DINO')
-    parser.add_argument('--pose_model_id', type=str, default="yolo11x-pose.pt", 
-                        help='Model ID for pose detection')
     parser.add_argument('--hand_iou_threshold', type=float, default=0.5, 
                         help='IoU threshold for hand detection')
-    parser.add_argument('--confidence_threshold', type=float, default=0.5, 
-                        help='Confidence threshold for detection')
-    parser.add_argument('--coco_kpts_threshold', type=int, default=3, 
-                        help='Keypoints threshold for COCO')
     parser.add_argument('--device', type=str, default=None, 
                         help='Computation device (e.g., "cuda", "cpu")')
-    parser.add_argument('--annotation_frequency', type=int, default=10, 
+    parser.add_argument('--annotation_frequency', type=int, default=20, 
                         help='Annotation frequency in seconds')
     parser.add_argument('--sampling_fps', type=int, default=8, 
                         help='Sampling frames per second')
-
+    parser.add_argument(
+        "--patients",
+        type=lambda s: s.split(","),
+        default='C00015',
+        help=(
+            "Comma-separated list of patient IDs to include (e.g. 'S0001,S0002'). "
+            "If omitted, uses all patients."
+        ),
+    )
+    parser.add_argument(
+        "--activities",
+        type=lambda s: s.split(","),
+        default=None,
+        help=(
+            "Comma-separated list of activities (e.g. 'brushing,drinking'). "
+            "If omitted, uses all activities."
+        ),
+    )
+    parser.add_argument(
+        "--reps",
+        choices=["all", "first"],
+        default="first",
+        help="Whether to load all reps or only the first rep of each task."
+    )
+    parser.add_argument(
+        "--filter-for-testset",
+        action="store_true",
+        help=(
+            "If set, only load the videos in the official test set "
+            "(./data/public/strokerehab_test_set.txt)."
+        ),
+    )
+    
     args = parser.parse_args()
     
     # Initialize with command line arguments
     hand_predictor = HandPredictor(
         dino_model_id=args.dino_model_id,
-        pose_model_id=args.pose_model_id,
         hand_iou_threshold=args.hand_iou_threshold,
-        confidence_threshold=args.confidence_threshold,
-        coco_kpts_threshold=args.coco_kpts_threshold,
         device=args.device
     )
+
+    # Build dataset_kwargs only with the user-supplied values
+    dataset_kwargs = {}
+    if args.patients is not None:
+        # join back into a comma-string, since your loader wants a str
+        dataset_kwargs["patients"] = ",".join(args.patients)
+    if args.activities is not None:
+        dataset_kwargs["activity"] = ",".join(args.activities)
+    if args.reps is not None:
+        dataset_kwargs["reps"] = args.reps
+    if args.filter_for_testset:
+        dataset_kwargs["filter_for_testset"] = True
     human_input_data_manager = DataManager(
         annotation_frequency_s=args.annotation_frequency,
-        sampling_fps=args.sampling_fps
+        sampling_fps=args.sampling_fps,
+        dataset_kwargs=dataset_kwargs
     )
     collection_api = CollectionAPI(
         hand_predictor=hand_predictor,
