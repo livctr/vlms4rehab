@@ -1,0 +1,65 @@
+# Load StrokeRehab dataset from local
+dataset_kwargs:
+  use_dataset_builder: !function utils.strokerehab_load_C00015_dataset
+task: "strokerehab_primitives_2"
+test_split: test
+output_type: generate_until
+doc_to_visual: !function utils_primitives.sr_primitives_doc_to_visual
+doc_to_text: !function utils_primitives.sr_primitives_doc_to_text
+doc_to_target: !function utils_primitives.sr_primitives_doc_to_target
+generation_kwargs:
+  max_new_tokens: 16  # Can be increase
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: true
+process_results: !function utils_primitives.sr_primitives_process_results
+metric_list:
+  - metric: edit_score
+    aggregation: mean
+    higher_is_better: true
+  - metric: action_error_rate
+    aggregation: mean
+    higher_is_better: false
+  - metric: mae_avg
+    aggregation: mean
+    higher_is_better: false
+  - metric: mae_reach
+    aggregation: mean
+    higher_is_better: false
+  - metric: mae_reposition
+    aggregation: mean
+    higher_is_better: false
+  - metric: mae_transport
+    aggregation: mean
+    higher_is_better: false
+  - metric: mae_stabilize
+    aggregation: mean
+    higher_is_better: false
+  - metric: mae_idle
+    aggregation: mean
+    higher_is_better: false
+  - metric: count_truth
+    aggregation: mean
+  - metric: count_pred
+    aggregation: mean
+  - metric: count_reach
+    aggregation: mean
+  - metric: count_reposition
+    aggregation: mean
+  - metric: count_transport
+    aggregation: mean
+  - metric: count_stabilize
+    aggregation: mean
+  - metric: count_idle
+    aggregation: mean
+
+lmms_eval_specific_kwargs:
+  prompt: "single_prediction"  # "ideal", "single_motion_and_contact"
+  use_video_with_segmentations: false
+filter_list:
+  - name: "combine-and-parse"
+    filter:
+      - function: !function utils_primitives.OutputToResultsFilter
+metadata:
+  version: 1.0

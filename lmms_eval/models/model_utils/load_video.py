@@ -25,6 +25,32 @@ def load_video_decord(video_path, max_frames_num):
     return spare_frames  # (frames, height, width, channels)
 
 
+
+def frame_chunks(n, k, v, r=1):
+    """
+    Generate frame chunks over frames [0, n-1], taking k samples per chunk
+    with overlap v (in samples) and sampling rate r (step between indices).
+    Returns tuples of (indices, start, end), where end is exclusive.
+    """
+    if k <= 0:
+        raise ValueError("k must be positive")
+    if v < 0 or v >= k:
+        raise ValueError("overlap v must be >=0 and < k")
+    if r <= 0:
+        raise ValueError("sampling rate r must be positive")
+
+    step = (k - v) * r
+    start = 0
+    while start < n:
+        end_raw = start + k * r
+        end = min(end_raw, n)
+        chunk = list(range(start, end, r))
+        yield chunk, start, end
+        if end_raw >= n:
+            break
+        start += step
+
+
 def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overlap_frames_num, sampling_fps, force_sample=False, ret_idx=False):
     if max_frames_num == 0:
         return np.zeros((1, 336, 336, 3))
@@ -37,22 +63,27 @@ def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overla
 
     if sampling_strategy == "uniform":
         if total_frame_num < max_frames_num and not force_sample:
-            eval_logger.info(f"Video has {total_frame_num} frames, less than {max_frames_num}, not sampling")
+            eval_logger.debug(f"Video has {total_frame_num} frames, less than {max_frames_num}, not sampling")
             frame_idx = np.arange(total_frame_num)
         else:
-            frame_idx = np.linspace(0, total_frame_num - 1, max_frames_num, dtype=int)
-        yield ret_fn(frame_idx)
+            frame_idx = np.linspace(0, total_frame_num, max_frames_num, dtype=int, endpoint=False)
+        yield ret_fn(frame_idx), round(0.0, 3), round(len(vr) / video_fps, 3)
     elif sampling_strategy == "dense":
-        eval_logger.info(f"Video FPS: {video_fps}, Desired Sampling FPS: {sampling_fps}, Achieved Sampling FPS: {float(video_fps) / sampling_rate}")
-        step = (max_frames_num - overlap_frames_num) * sampling_rate
-        start = 0
-        while start + (max_frames_num - 1) * sampling_rate < total_frame_num:
-            indices = start + np.arange(max_frames_num) * sampling_rate
-            yield ret_fn(indices)
-            start += step
+
+        eval_logger.debug(f"Video FPS: {video_fps}, Desired Sampling FPS: {sampling_fps}, Achieved Sampling FPS: {float(video_fps) / sampling_rate}")
+
+        for indices, start_idx, end_idx in frame_chunks(
+            total_frame_num,
+            max_frames_num,
+            overlap_frames_num,
+            sampling_rate
+        ):
+            frames = ret_fn(indices)
+            start_t = start_idx / video_fps
+            end_t = end_idx / video_fps
+            yield frames, round(start_t, 3), round(end_t, 3)
     else:
         raise ValueError(f"Invalid sampling strategy: {sampling_strategy}")
-
 
 
 # This one is faster

@@ -309,8 +309,17 @@ class Llava_OneVision(lmms):
                 self.overlap_frames_num,
                 self.sampling_fps,
             )
-            context = batched_contexts[0]
-            task_type = "video"
+
+            def separate_context(context: str):
+                if "<SEP>" not in context:
+                    return [context]
+                # Split the context by <SEP> and remove leading/trailing whitespace
+                parts = [part.strip() for part in context.split("<SEP>")]
+                # Remove empty parts
+                parts = [part for part in parts if part]
+                return parts
+            context_with_multiple_questions_one_string = batched_contexts[0]
+            context_with_multiple_questions_list = separate_context(context_with_multiple_questions_one_string)
 
             # we assume all gen kwargs in the batch are the same
             # this is safe to assume because the `grouper` object ensures it.
@@ -335,7 +344,7 @@ class Llava_OneVision(lmms):
                 image_tensor = [video]
                 return image_tensor
 
-            def build_input_ids(image_tensor, gen_kwargs):
+            def build_input_ids(context, image_tensor, gen_kwargs):
                 if image_tensor is not None and len(image_tensor) != 0 and DEFAULT_IMAGE_TOKEN not in context:
                     """
                     Three senarios:
@@ -407,20 +416,27 @@ class Llava_OneVision(lmms):
                 return input_ids, attention_masks, pad_token_ids, gen_kwargs_copy
 
             outputs = []
-            for video in videos:
+            for video, start_time_s, end_time_s in videos:
                 image_tensor = build_video(video)
-                input_ids, attention_masks, pad_token_ids, gen_kwargs_copy = build_input_ids(image_tensor, gen_kwargs)
-                try:
-                    with torch.inference_mode():
-                        cont = self.model.generate(input_ids, attention_mask=attention_masks, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs_copy)
-                        # cont = self.model.generate(qwen_input_ids, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs)
-                    text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
-                    outputs.append(text_outputs)
 
-                except Exception as e:
-                    raise e
+                video_window_outputs = []
+                for context in context_with_multiple_questions_list:
+                    input_ids, attention_masks, pad_token_ids, gen_kwargs_copy = build_input_ids(context, image_tensor, gen_kwargs)
+                    try:
+                        with torch.inference_mode():
+                            cont = self.model.generate(input_ids, attention_mask=attention_masks, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs_copy)
+                            # cont = self.model.generate(qwen_input_ids, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs)
+                        text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
+                        video_window_outputs.append(text_outputs)
+                    except Exception as e:
+                        raise e
 
-            outputs_print = "\n".join(outputs)
+                # Join the outputs for this video window
+                video_window_outputs = " <SEP> ".join(video_window_outputs)
+
+                outputs.append((video_window_outputs, start_time_s, end_time_s))
+
+            outputs_print = "\n".join([o[0] for o in outputs])
             eval_logger.debug(f"Prediction: {outputs_print}")
             res.append(outputs)
             self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)

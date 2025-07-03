@@ -342,7 +342,6 @@ class LlavaVid(lmms):
                 pbar.update(1)
                 continue
 
-            input_ids, attention_masks, stopping_criteria, cur_prompt = build_context(contexts)
             if "max_new_tokens" not in gen_kwargs:
                 gen_kwargs["max_new_tokens"] = 1024
             if "temperature" not in gen_kwargs:
@@ -352,29 +351,45 @@ class LlavaVid(lmms):
             if "num_beams" not in gen_kwargs:
                 gen_kwargs["num_beams"] = 1
 
-            outputs = []
-            for video in videos:
-                video = build_video(video)
-                with torch.inference_mode():
-                    output_ids = self.model.generate(
-                        inputs=input_ids,
-                        images=[video],
-                        attention_mask=attention_masks,
-                        modalities="video",
-                        use_cache=self.use_cache,
-                        stopping_criteria=[stopping_criteria],
-                        do_sample=True if gen_kwargs["temperature"] > 0 else False,
-                        temperature=gen_kwargs["temperature"],
-                        top_p=gen_kwargs["top_p"],
-                        num_beams=gen_kwargs["num_beams"],
-                        max_new_tokens=gen_kwargs["max_new_tokens"],
-                    )
+            input_ids, attention_masks, stopping_criteria, cur_prompt = build_context(contexts)
 
-                output = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
-                outputs.append(output)
+            def separate_context(context: str):
+                if "<SEP>" not in context:
+                    return [context]
+                # Split the context by <SEP> and remove leading/trailing whitespace
+                parts = [part.strip() for part in context.split("<SEP>")]
+                # Remove empty parts
+                parts = [part for part in parts if part]
+                return parts
+            context_with_multiple_questions_list = separate_context(contexts)
+            built_contexts = [build_context(context) for context in context_with_multiple_questions_list]
+
+            outputs = []
+            for video, start_time_s, end_time_s in videos:
+                video = build_video(video)
+                window_outputs = []
+                for input_ids, attention_masks, stopping_criteria, cur_prompt in built_contexts:
+                    with torch.inference_mode():
+                        output_ids = self.model.generate(
+                            inputs=input_ids,
+                            images=[video],
+                            attention_mask=attention_masks,
+                            modalities="video",
+                            use_cache=self.use_cache,
+                            stopping_criteria=[stopping_criteria],
+                            do_sample=True if gen_kwargs["temperature"] > 0 else False,
+                            temperature=gen_kwargs["temperature"],
+                            top_p=gen_kwargs["top_p"],
+                            num_beams=gen_kwargs["num_beams"],
+                            max_new_tokens=gen_kwargs["max_new_tokens"],
+                        )
+                    output = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
+                    window_outputs.append(output)
+                window_outputs = " <SEP> ".join(window_outputs)
+                outputs.append((window_outputs, start_time_s, end_time_s))
 
             eval_logger.debug(f"Question: {cur_prompt}")
-            outputs_print = "\n".join(outputs)
+            outputs_print = "\n".join([f"{out[0]} (start: {out[1]}, end: {out[2]})" for out in outputs])
             eval_logger.debug(f"Prediction: {outputs_print}")
             res.append(outputs)
             pbar.update(1)

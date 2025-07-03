@@ -173,11 +173,22 @@ def clean_metadata():
     ]
     df = df[cols]
 
+    # Cut off bases for path_v and path_l
+    import os
+    df['path_v'] = df['path_v'].apply(lambda x: os.path.relpath(x, DataPaths.RAW_VIDEO_DIR))
+    df['path_l'] = df['path_l'].apply(lambda x: os.path.relpath(x, DataPaths.RAW_LABEL_DIR))
+
+    # Add a column for subsampling within the original strokerehab test set
+    test_set_df = df[df["is_in_strokerehab_test_set"] == True]
+    sample_indexes = test_set_df.sample(n=50, random_state=42).index
+    df['subsampled_test_set'] = False
+    df.loc[sample_indexes, 'subsampled_test_set'] = True
+
     # # take the first repetition of each activity
     # subset_df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
     # subset_df = subset_df[cols]
 
-    df.to_csv("./data/csvs_and_txts/cleaned_metadata.csv", index=False)
+    df.to_csv("./data/public/cleaned_metadata.csv", index=False)
     # subset_df.to_csv("./data/csvs_and_txts/cleaned_metadata_subset.csv", index=False)
 
 

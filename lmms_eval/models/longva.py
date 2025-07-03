@@ -265,6 +265,144 @@ class LongVA(lmms):
         frame_idx = uniform_sampled_frames.tolist()
         spare_frames = vr.get_batch(frame_idx).asnumpy()
         return spare_frames  # (frames, height, width, channels)
+    
+    # def generate_until(self, requests: List[Instance]) -> List[str]:
+    #     res = []
+
+    #     def _collate(x):
+    #         # the negative sign on len(toks) sorts descending - this has a few advantages:
+    #         # - time estimates will always be over not underestimates, which is more useful for planning
+    #         # - to know the size of a batch when going through the list, you know the first one is always the batch
+    #         #   padded context length. this is useful to simplify the batching logic and more importantly to make
+    #         #   automatic adaptive batches much much easier to implement
+    #         # - any OOMs will happen right away rather than near the end
+    #         toks = self.tok_encode(x[0])
+    #         return -len(toks), x[0]
+
+    #     # we group requests by their generation_kwargs,
+    #     # so that we don't try to execute e.g. greedy sampling and temp=0.8 sampling
+    #     # in the same batch.
+    #     re_ords = utils.Collator([reg.args for reg in requests], _collate, grouping=True)
+    #     chunks = re_ords.get_batched(n=self.batch_size, batch_fn=None)
+    #     num_iters = len(requests) // self.batch_size if len(requests) % self.batch_size == 0 else len(requests) // self.batch_size + 1
+    #     pbar = tqdm(total=num_iters, disable=(self.rank != 0), desc="Model Responding")
+    #     for chunk in chunks:
+    #         batched_contexts, all_gen_kwargs, batched_doc_to_visual, batched_doc_id, batched_task, batched_split = zip(*chunk)
+    #         task = batched_task[0]
+    #         split = batched_split[0]
+    #         batched_visuals = [batched_doc_to_visual[0](self.task_dict[task][split][ids]) for ids in batched_doc_id]  # [B, N]
+    #         flattened_visuals = self.flatten(batched_visuals)  # [B*N]
+    #         assert len(batched_visuals) == 1
+
+    #         # we assume all gen kwargs in the batch are the same
+    #         # this is safe to assume because the `grouper` object ensures it.
+    #         gen_kwargs = all_gen_kwargs[0]
+    #         if "until" in gen_kwargs:
+    #             gen_kwargs.pop("until")
+
+    #         question_input = []
+
+    #         for visual, context in zip(batched_visuals, batched_contexts):
+
+    #             assert type(visual[0]) == str
+    #             if "image_aspect_ratio" in gen_kwargs.keys() and "image_aspect_ratio" not in self._config.__dict__:
+    #                 # here we should pop it out of gen_kwargs so that it doesn't get passed to the model for next step of generation
+    #                 self._config.image_aspect_ratio = gen_kwargs.pop("image_aspect_ratio")
+    #                 eval_logger.info(f"Setting image aspect ratio: {self._config.image_aspect_ratio}")
+
+    #             image_tensor = []
+    #             try:
+    #                 if self.video_decode_backend == "decord":
+    #                     frames = self.load_video(visual, self.max_frames_num)
+    #                 elif self.video_decode_backend == "pyav":
+    #                     frames = read_video_pyav(visual[0], num_frm=self.max_frames_num)
+    #                 frames = self._image_processor.preprocess(frames, return_tensors="pt")["pixel_values"].half().cuda()
+    #                 image_tensor.append(frames)
+    #             except Exception as e:
+    #                 eval_logger.error(f"Error {e} in loading video")
+    #                 image_tensor = None
+
+    #             task_type = "video"
+
+    #             if image_tensor is not None and len(image_tensor) != 0 and DEFAULT_IMAGE_TOKEN not in context:
+    #                 """
+    #                 Three senarios:
+    #                 1. No image, and there for, no image token should be added.
+    #                 2. image token is already specified in the context, so we don't need to add it.
+    #                 3. image token is not specified in the context and there is image inputs, so we need to add it. In this case, we add the image token at the beginning of the context and add a new line.
+    #                 4. For video tasks, we could add a <image> token or multiple <image> tokens for each frame in the context. This depends on the training strategy and should balance in test to decide which is better
+    #                 """
+    #                 if task_type == "image":
+    #                     image_tokens = [DEFAULT_IMAGE_TOKEN] * len(visual) if isinstance(visual, list) else [DEFAULT_IMAGE_TOKEN]
+    #                 elif task_type == "video":
+    #                     image_tokens = [DEFAULT_IMAGE_TOKEN] * len(frames) if self.token_strategy == "multiple" else [DEFAULT_IMAGE_TOKEN]
+
+    #                 image_tokens = " ".join(image_tokens)
+    #                 question = image_tokens + "\n" + context
+    #             else:
+    #                 question = context
+
+    #             # This is much safer for llama3, as we now have some object type in it
+    #             if "llama_3" in self.conv_template:
+    #                 conv = copy.deepcopy(conv_templates[self.conv_template])
+    #             else:
+    #                 conv = conv_templates[self.conv_template].copy()
+    #             conv.append_message(conv.roles[0], question)
+    #             conv.append_message(conv.roles[1], None)
+    #             prompt_question = conv.get_prompt()
+    #             question_input.append(prompt_question)
+
+    #         # preconfigure gen_kwargs with defaults
+    #         if "max_new_tokens" not in gen_kwargs:
+    #             gen_kwargs["max_new_tokens"] = 32
+    #         if "temperature" not in gen_kwargs:
+    #             gen_kwargs["temperature"] = 0.001
+    #         if "do_sample" not in gen_kwargs:
+    #             gen_kwargs["do_sample"] = False
+    #         if "top_p" not in gen_kwargs:
+    #             gen_kwargs["top_p"] = None
+    #         if "num_beams" not in gen_kwargs:
+    #             gen_kwargs["num_beams"] = 1
+    #         gen_kwargs["do_sample"] = False  # I don't know why the above does nothing
+
+    #         input_ids_list = [tokenizer_image_token(prompt, self.tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt") for prompt in question_input]
+    #         pad_token_ids = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+    #         input_ids = self.pad_sequence(input_ids_list, batch_first=True, padding_value=pad_token_ids).to(self.device)
+    #         attention_masks = input_ids.ne(pad_token_ids).to(self.device)
+
+    #         if task_type == "image":
+    #             gen_kwargs["image_sizes"] = [flattened_visuals[idx].size for idx in range(len(flattened_visuals))]
+    #         elif task_type == "video":
+    #             stop_str = conv.sep if conv.sep_style != SeparatorStyle.TWO else conv.sep2
+    #             keywords = [stop_str]
+    #             stopping_criteria = KeywordsStoppingCriteria(keywords, self.tokenizer, input_ids)
+    #             gen_kwargs["modalities"] = ["video"]
+    #             gen_kwargs["stopping_criteria"] = [stopping_criteria]
+    #             self._config.mm_spatial_pool_stride = self.mm_spatial_pool_stride
+    #             self._config.mm_spatial_pool_mode = self.mm_spatial_pool_mode
+
+    #         # These steps are not in LLaVA's original code, but are necessary for generation to work
+    #         # TODO: attention to this major generation step...
+    #         if "image_aspect_ratio" in gen_kwargs.keys():
+    #             gen_kwargs.pop("image_aspect_ratio")
+    #         import pdb; pdb.set_trace()
+    #         try:
+    #             with torch.inference_mode():
+    #                 cont = self.model.generate(input_ids, attention_mask=attention_masks, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs)
+
+    #             text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)
+    #         except Exception as e:
+    #             raise e
+
+    #         text_outputs = [response.strip() for response in text_outputs]
+    #         res.extend(text_outputs)
+    #         self.cache_hook.add_partial("generate_until", (context, gen_kwargs), text_outputs)
+    #         pbar.update(1)
+    #         # reorder this group of results back to original unsorted form
+    #     res = re_ords.get_original(res)
+
+    #     pbar.close()
+    #     return res
 
     def generate_until(self, requests: List[Instance]) -> List[str]:
         res = []
@@ -274,7 +412,7 @@ class LongVA(lmms):
             image_tensor = [video]
             return image_tensor
         
-        def build_input_ids(image_tensor):
+        def build_input_ids(context, image_tensor, gen_kwargs):
 
             question_input = []
 
@@ -362,7 +500,19 @@ class LongVA(lmms):
             flattened_visuals = self.flatten(batched_visuals)  # [B*N]
             assert len(batched_visuals) == 1
             assert self.video_decode_backend == "decord"
-            visual, context = batched_visuals[0], batched_contexts[0]
+            visual = batched_visuals[0]
+
+            def separate_context(context: str):
+                if "<SEP>" not in context:
+                    return [context]
+                # Split the context by <SEP> and remove leading/trailing whitespace
+                parts = [part.strip() for part in context.split("<SEP>")]
+                # Remove empty parts
+                parts = [part for part in parts if part]
+                return parts
+            context_with_multiple_questions_one_string = batched_contexts[0]
+            context_with_multiple_questions_list = separate_context(context_with_multiple_questions_one_string)
+
             videos = load_long_video_decord(
                 batched_visuals[0][0],
                 self.max_frames_num,
@@ -387,23 +537,34 @@ class LongVA(lmms):
             # TODO: attention to this major generation step...
             if "image_aspect_ratio" in gen_kwargs.keys():
                 gen_kwargs.pop("image_aspect_ratio")
-            try:
+            
+            outputs = []
+            for video, start_time_s, end_time_s in videos:
+                image_tensor = build_video(video)
+                built_contexts = [build_input_ids(context, image_tensor, gen_kwargs) for context in context_with_multiple_questions_list]
+                
+                video_window_output = []
+                with torch.inference_mode():
+                    for input_ids, attention_masks, pad_token_ids, gen_kwargs_copy in built_contexts:
+                        single_output = self.model.generate(
+                            input_ids,
+                            attention_mask=attention_masks,
+                            pad_token_id=pad_token_ids,
+                            images=image_tensor,
+                            use_cache=self.use_cache,
+                            **gen_kwargs_copy
+                        )
+                        text_output = self.tokenizer.batch_decode(
+                            single_output, skip_special_tokens=True
+                        )[0].strip()
+                        video_window_output.append(text_output)
+                video_window_output = " <SEP> ".join(video_window_output)
+                outputs.append((video_window_output, start_time_s, end_time_s))
 
-                outputs = []
-                for video in videos:
-                    image_tensor = build_video(video)
-                    input_ids, attention_masks, pad_token_ids, gen_kwargs_copy = build_input_ids(image_tensor)
-                    with torch.inference_mode():
-                        cont = self.model.generate(input_ids, attention_mask=attention_masks, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs_copy)
-                    text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
-                    outputs.append(text_outputs)
-            except Exception as e:
-                raise e
-
-            outputs_print = "\n".join(outputs)
-            eval_logger.debug(f"Response: {outputs_print}")
+            output_print = "\n".join([o[0] for o in outputs])
+            eval_logger.debug(f"Response: {output_print}")
             res.append(outputs)
-            self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)
+            # self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)
             pbar.update(1)
 
         # reorder this group of results back to original unsorted form

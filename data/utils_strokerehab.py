@@ -1,15 +1,10 @@
+import pandas as pd
+from typing import Optional, Tuple, List
 import os
 
 import pandas as pd
 import datasets
 
-
-VIDEO_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoData/rawVideosADLsandFM/"
-CHUNKED_VIDEO_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/ProcessedVideoData_1fps"
-LABEL_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/rawVideoLabels/"
-ACTIVITY_GROUND_TRUTH_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/cvfm4rehab/data/public/activities_ground_truth.yaml"
-METADATA_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/cvfm4rehab/data/public/cleaned_metadata.csv"
-HUMAN_INPUT_JSON_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoDataSam2Input/human_input.json"
 
 HEALTHY_PATIENTS = (
     "C00011,C00012,C00015,C00019,C00020,C00022,C00023,C00024,C00025,C00026,"
@@ -34,7 +29,34 @@ PATIENTS = (
     SEVERE_PATIENTS
 )
 
-def strokerehab_load_dataset(patients='all', activity='all', reps='all', filter_for_testset=False):
+
+##################### Path and File Utilities #####################
+class DataPaths:
+
+    DATA_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/"
+    RAW_VIDEO_DIR = os.path.join(DATA_DIR, "VideoData/rawVideosADLsandFM")
+    RAW_LABEL_DIR = os.path.join(DATA_DIR, "rawVideoLabels")
+
+    METADATA_DIR = os.path.join(DATA_DIR, "metadata")
+    METADATA_PATH = os.path.join(METADATA_DIR, "metadata.csv")
+    VIDEO_METADATA_PATH = os.path.join(METADATA_DIR, "video_metadata.csv")
+    LABEL_METADATA_PATH = os.path.join(METADATA_DIR, "label_metadata.csv")
+
+    CLEANED_METADATA_PATH = os.path.join("./data/public/cleaned_metadata.csv")
+
+    VERIFICATION_PATH = os.path.join(DATA_DIR, "video_n_labels")
+
+    HUMAN_INPUT_JSON_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoDataSam2Annotations/human_input.json"
+
+    SAM2_ANNOTATED_VIDEOS_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoDataSam2Annotations/"
+
+    ACTIVITY_GROUND_TRUTH_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/cvfm4rehab/data/public/activities_ground_truth.yaml"
+
+
+def strokerehab_load_dataset(
+        patients='all', activity='all', reps='all',
+        filter_for_testset=False, filter_for_subsampled_testset=False,
+        video_regex=None):
     """
     Loads the StrokeRehab dataset from a cleaned metadata file and applies AND-ed filters.
 
@@ -50,23 +72,33 @@ def strokerehab_load_dataset(patients='all', activity='all', reps='all', filter_
             the original StrokeRehab paper. https://pubmed.ncbi.nlm.nih.gov/37766938/
             This data is located in './data/public/strokerehab_test_set.txt' and already
             incorporated into the CSV metadata file.
+        filter_for_subsampled_testset (bool): If True, include only the VIDEOS in the
+            subsampled test set of the original StrokeRehab paper. 50 videos total. A subset of the
+            original test set, which is ~515 videos.
+        video_regex (str): A regex pattern to filter video paths. If provided, this will override
+            the patient and activity filters. This is useful for loading specific videos based on their paths.
     
     Returns:
         dataset (datasets.Dataset): The StrokeRehab dataset with the specified filters applied.
     """
-    df = pd.read_csv(METADATA_PATH)
-    if patients != 'all':
-        patients = patients.split(',')
-        df = df[df['patient'].isin(patients)]
-    if activity != 'all':
-        activity = activity.split(',')
-        df = df[df['activity'].isin(activity)]
-    if reps != 'all':
-        if reps != 'first':
-            raise ValueError("Invalid value for reps. Must be 'all' or 'first'.")
-        df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
-    if filter_for_testset:
-        df = df[df['is_in_strokerehab_test_set']]
+    df = pd.read_csv(DataPaths.CLEANED_METADATA_PATH)
+    if video_regex is not None:
+        df = df[df['path_v'].str.contains(video_regex)]
+    else:
+        if patients != 'all':
+            patients = patients.split(',')
+            df = df[df['patient'].isin(patients)]
+        if activity != 'all':
+            activity = activity.split(',')
+            df = df[df['activity'].isin(activity)]
+        if reps != 'all':
+            if reps != 'first':
+                raise ValueError("Invalid value for reps. Must be 'all' or 'first'.")
+            df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
+        if filter_for_testset:
+            df = df[df['is_in_strokerehab_test_set']]
+        if filter_for_subsampled_testset:
+            df = df[df['subsampled_test_set']]
     dataset = datasets.Dataset.from_pandas(df)
     dataset_dict = datasets.DatasetDict({'test': dataset})
     return dataset_dict
@@ -87,57 +119,227 @@ class LabelUtils:
         return "left" if num_lefts > num_rights else "right"
 
     @staticmethod
-    def convert_labels_to_action_sequence(path, handedness = None):
-        """Converts the marker names to a sequence.
+    def convert_labels_to_action_sequence(path, handedness=None):
+        """
+        Converts marker names to an action sequence with start times and durations.
         
         E.g.
-        Input: ['l_reach', 'l_reach', 'l_transport_prox', 'l_stabilize', 'r_reach']
-            handedness='left
-        Output: ['reach', 'transport', 'stabilize']  # ignore the right reach
+        Input:
+            MarkerNames: ['l_reach', 'l_reach', 'l_transport_prox', 'l_stabilize', 'r_reach']
+            Time_s:       [0.0,       0.5,       1.0,            1.5,         2.0]
+            handedness='left'
+        Output:
+            [
+                {'action': 'reach', 'start_time': 0.0, 'duration': 0.5},
+                {'action': 'transport', 'start_time': 1.0, 'duration': 0.5},
+                {'action': 'stabilize', 'start_time': 1.5, 'duration': None},
+            ]
         """
         df = pd.read_csv(path)
         times = df['Time_s'].tolist()
-        actions = df['MarkerNames']
+        markers = df['MarkerNames']
         if handedness is None:
-            num_lefts = actions.str.startswith('l_').sum() + actions.str.contains('_l_').sum()
-            num_rights = actions.str.startswith('r_').sum() + actions.str.contains('_r_').sum()
+            num_lefts = markers.str.startswith('l_').sum() + markers.str.contains('_l_').sum()
+            num_rights = markers.str.startswith('r_').sum() + markers.str.contains('_r_').sum()
             handedness = "left" if num_lefts > num_rights else "right"
-        actions = actions.tolist()
-        action_seq = []
+        markers = markers.tolist()
 
-        def deduped_action_append(action):
-            if len(action_seq) == 0:
-                action_seq.append(action)
+        sequence = []
+
+        def append_unique(time, action):
+            if not sequence or sequence[-1]['action'] != action:
+                sequence.append({'action': action, 'start_time': time})
+
+        for time, marker in zip(times, markers):
+            if (handedness == 'left' and (marker.startswith('l_') or '_l_' in marker)) or \
+            (handedness == 'right' and (marker.startswith('r_') or '_r_' in marker)):
+                if 'reach' in marker:
+                    append_unique(time, 'reach')
+                elif 'reposition' in marker or 'retract' in marker:
+                    append_unique(time, 'reposition')
+                elif 'transport' in marker:
+                    append_unique(time, 'transport')
+                elif 'stabilize' in marker:
+                    append_unique(time, 'stabilize')
+                elif 'idle' in marker or 'rest' in marker:
+                    append_unique(time, 'idle')
+        last_time = times[-1] if times else 0.0
+
+        # Compute durations for each action; last action duration remains None
+        for i in range(len(sequence)):
+            start_time = sequence[i]['start_time']
+            if i < len(sequence) - 1:
+                sequence[i]['duration'] = sequence[i+1]['start_time'] - start_time
             else:
-                if action[1] != action_seq[-1][1]:
-                    action_seq.append(action)
+                sequence[i]['duration'] = last_time - start_time
 
-        for i, action in enumerate(actions):
-            if (handedness == "left" and (action.startswith('l_') or '_l_' in action)) \
-                or (handedness == "right" and (action.startswith('r_') or '_r_' in action)):
-                if "reach" in action:
-                    deduped_action_append((times[i], "reach"))
-                elif "reposition" in action or "retract" in action:
-                    deduped_action_append((times[i], "reposition"))
-                elif "transport" in action:
-                    deduped_action_append((times[i], "transport"))
-                elif "stabilize" in action:
-                    deduped_action_append((times[i], "stabilize"))
-                elif "idle" in action or "rest" in action:
-                    deduped_action_append((times[i], "idle"))
-        return action_seq
+        return sequence
+    
+
+    @staticmethod
+    def convert_labels_to_prims_times(
+        path: str, 
+        handedness: Optional[str] = None,
+        duplicate_last_prim: bool = False
+    ) -> Tuple[List[str], List[float]]:
+        """
+        Reads the CSV at `path`, extracts the action sequence for the dominant hand,
+        and returns (prims, times) where
+        - prims: list of primitives, e.g. ['reach','transport','stabilize']
+        - times: list of timestamps, one more than prims,
+                e.g. [t0, t1, t2, t3] so len(times) == len(prims)+1
+        """
+        df = pd.read_csv(path)
+        times = df['Time_s'].tolist()
+        markers = df['MarkerNames']
+
+        # infer handedness if needed
+        if handedness not in ('left','right'):
+            num_lefts = markers.str.startswith('l_').sum() + markers.str.contains('_l_').sum()
+            num_rights = markers.str.startswith('r_').sum() + markers.str.contains('_r_').sum()
+            handedness = 'left' if num_lefts > num_rights else 'right'
+
+        prims: List[str] = []
+        prim_times: List[float] = []
+
+        def append_unique(action: str, t: float):
+            if not prims or prims[-1] != action:
+                prims.append(action)
+                prim_times.append(t)
+
+        for t, m in zip(times, markers.tolist()):
+            m_low = m.lower()
+            if handedness == 'left' and not (m_low.startswith('l_') or '_l_' in m_low):
+                continue
+            if handedness == 'right' and not (m_low.startswith('r_') or '_r_' in m_low):
+                continue
+
+            if 'reach' in m_low:
+                append_unique('reach', t)
+            elif 'reposition' in m_low or 'retract' in m_low:
+                append_unique('reposition', t)
+            elif 'transport' in m_low:
+                append_unique('transport', t)
+            elif 'stabilize' in m_low:
+                append_unique('stabilize', t)
+            elif 'idle' in m_low or 'rest' in m_low:
+                append_unique('idle', t)
+
+        # if no primitives found, return empty
+        if not prims:
+            return [], []
+
+        if duplicate_last_prim:  # If we want number of prims / times to match
+            prims.append(prims[-1])        
+        prim_times.append(times[-1])
+
+        return prims, prim_times
 
 
-##################### Path and File Utilities #####################
-class DataPaths:
 
-    DATA_DIR = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/"
-    RAW_VIDEO_DIR = os.path.join(DATA_DIR, "VideoData/rawVideosADLsandFM")
-    RAW_LABEL_DIR = os.path.join(DATA_DIR, "rawVideoLabels")
+##################### Response String Utilities #####################
+def resps_to_string(prims: tuple[str, ...], times: tuple[float, ...]) -> str:
+    """
+    Turns two parallel tuples into a single semicolon-delimited string:
+      "PRIM1@time1;PRIM2@time2;..."
+    """
+    if len(times) != len(prims) + 1:
+        raise ValueError("`times` must have exactly one more element than `prims`")
 
-    METADATA_DIR = os.path.join(DATA_DIR, "metadata")
-    METADATA_PATH = os.path.join(METADATA_DIR, "metadata.csv")
-    VIDEO_METADATA_PATH = os.path.join(METADATA_DIR, "video_metadata.csv")
-    LABEL_METADATA_PATH = os.path.join(METADATA_DIR, "label_metadata.csv")
+    # For each primitive we pair it with its start time...
+    segments = [f"{p}@{t:.3f}" for p, t in zip(prims, times)]
+    # ...and then append the final end-time for the last primitive
+    segments.append(f"{prims[-1]}@{times[-1]:.3f}")
+    return ";".join(segments)
 
-    VERIFICATION_PATH = os.path.join(DATA_DIR, "video_n_labels")
+
+def string_to_resps(s: str, drop_duplicated: bool = True) -> tuple[tuple[str, ...], tuple[float, ...]]:
+    """
+    Parses the semicolon-delimited string back into
+    (prims_tuple, times_tuple), where len(times_tuple) == len(prims_tuple)+1.
+    """
+    if not s:
+        return (), ()
+
+    tokens = s.split(";")
+    prims: list[str] = []
+    times: list[float] = []
+
+    for tok in tokens:
+        p, t_str = tok.split("@", 1)
+        prims.append(p)
+        times.append(float(t_str))
+
+    # Drop the duplicated final primitive, but keep all timestamps
+    if len(prims) >= 2 and drop_duplicated:
+        prims = prims[:-1]
+
+    return tuple(prims), tuple(times)
+
+
+def convert_motion_contact_to_primitives(
+    motion_and_contact, times, future_window=5.0
+):
+    """
+    Args:
+        motion_and_contact: list of length n, each either
+            - "Yes <SEP> Yes" strings, or
+            - 2-tuples ("Yes"/"No", "Yes"/"No")
+        times: list or tuple of floats of length n+1; times[i] is the start
+            of segment i, times[i+1] its end.
+        future_window: how many seconds ahead to scan for contact to label 'reach'
+    
+    Returns:
+        primitives: list of str of length n, one of
+            ["reach","reposition","transport","stabilize","idle"]
+        times: the exact same list/tuple you passed in (length n+1)
+    """
+    n = len(motion_and_contact)
+    assert len(times) == n + 1, "times must be one longer than motion_and_contact"
+
+    # parse Yes/No into booleans
+    motion_flags = []
+    contact_flags = []
+    for mc in motion_and_contact:
+        if isinstance(mc, str):
+            mot_str, con_str = mc.split("<SEP>")
+            motion = "yes" in mot_str.strip().lower()
+            contact = "yes" in con_str.strip().lower()
+        else:
+            motion = ("yes" in mc[0].strip().lower())
+            contact = ("yes" in mc[1].strip().lower())
+        motion_flags.append(motion)
+        contact_flags.append(contact)
+
+    primitives = []
+    start_times = times[:-1]  # length n
+
+    for i in range(n):
+        t0 = start_times[i]
+        m = motion_flags[i]
+        c = contact_flags[i]
+
+        if m and not c:
+            # scan ahead up to future_window
+            reach = False
+            j = i + 1
+            while j < n and (start_times[j] - t0) <= future_window:
+                if contact_flags[j]:
+                    reach = True
+                    break
+                j += 1
+            prim = "reach" if reach else "reposition"
+
+        elif m and c:
+            prim = "transport"
+
+        elif not m and c:
+            prim = "stabilize"
+
+        else:  # not m and not c
+            prim = "idle"
+
+        primitives.append(prim)
+
+    # return the new primitives list, and the original times unchanged
+    return primitives, times
