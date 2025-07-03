@@ -114,7 +114,17 @@ class NVILA(lmms):
         res = []
         pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
 
-        for contexts, gen_kwargs, doc_to_visual, doc_id, task, split in [reg.args for reg in requests]:
+        for context_with_multiple_questions_string, gen_kwargs, doc_to_visual, doc_id, task, split in [reg.args for reg in requests]:
+
+            def separate_context(context: str):
+                if "<SEP>" not in context:
+                    return [context]
+                # Split the context by <SEP> and remove leading/trailing whitespace
+                parts = [part.strip() for part in context.split("<SEP>")]
+                # Remove empty parts
+                parts = [part for part in parts if part]
+                return parts
+            context_with_multiple_questions_list = separate_context(context_with_multiple_questions_string)
 
             # encode, pad, and truncate contexts for this batch
             visual = doc_to_visual(self.task_dict[task][split][doc_id])[0]
@@ -128,37 +138,40 @@ class NVILA(lmms):
                 force_sample=False
             )
 
+            media_config = defaultdict(dict)
+            generation_config = self._model.default_generation_config
+            generation_config.do_sample = False
+            generation_config.max_new_tokens = 32
+
             outputs = []
-            for video in videos:
-
+            for video, start_time_s, end_time_s in videos:
                 images = [Image.fromarray(frame) for frame in video]
-                media = {'video': [images]}
-                conversation = [{"from": "human", "value": MEDIA_TOKENS['video'] + contexts}]
-                media['video'] = [process_images(images,
-                                                 self._model.vision_tower.image_processor,
-                                                 self._model.config).half()
-                                    for images in media['video']]
-                input_ids = tokenize_conversation(conversation, self._model.tokenizer, add_generation_prompt=True).cuda().unsqueeze(0)
 
-                media_config = defaultdict(dict)
-                generation_config = self._model.default_generation_config
-                generation_config.do_sample = False
-                generation_config.max_new_tokens = 100
+                video_window_output = []
+                for context in context_with_multiple_questions_list:
+                    media = {'video': [images]}
+                    conversation = [{"from": "human", "value": MEDIA_TOKENS['video'] + context}]
+                    media['video'] = [process_images(images,
+                                                    self._model.vision_tower.image_processor,
+                                                    self._model.config).half()
+                                        for images in media['video']]
+                    input_ids = tokenize_conversation(conversation, self._model.tokenizer, add_generation_prompt=True).cuda().unsqueeze(0)
 
-                output_ids = self._model.generate(
-                    input_ids=input_ids,
-                    media=media,
-                    media_config=media_config,
-                    generation_config=generation_config,
-                    logits_processor=None,
-                )
+                    output_ids = self._model.generate(
+                        input_ids=input_ids,
+                        media=media,
+                        media_config=media_config,
+                        generation_config=generation_config,
+                        logits_processor=None,
+                    )
+                    video_window_output.append(
+                        self._model.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
+                    )
+                video_window_output = " <SEP> ".join(video_window_output)
+                outputs.append((video_window_output, start_time_s, end_time_s))
 
-                response = self._model.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()
-
-                outputs.append(response)
-
-            eval_logger.debug(f"Context: {contexts}")
-            outputs_print = "\n".join(outputs)
+            eval_logger.debug(f"Context: {context_with_multiple_questions_string}")
+            outputs_print = "\n".join([o[0] for o in outputs])
             eval_logger.debug(f"NVILA Response: {outputs_print}")
             res.append(outputs)
             pbar.update(1)

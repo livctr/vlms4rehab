@@ -9,14 +9,14 @@ from transformers import pipeline
 import yaml
 
 
-from data.utils_strokerehab import VIDEO_DIR, ACTIVITY_GROUND_TRUTH_PATH
+from data.utils_strokerehab import DataPaths
 
 # Evaluation metrics
 SUMMARY_STEPS_METRICS = ["precision", "recall", "f1", "ordering_score", "summary_steps_score"]
 
 # Ground truth of the activity
 try:
-    with open(ACTIVITY_GROUND_TRUTH_PATH, "r") as file:
+    with open(DataPaths.ACTIVITY_GROUND_TRUTH_PATH, "r") as file:
         agt = yaml.safe_load(file)
     activity2steps = {x.get("name"): x.get("steps") for x in agt}
 except Exception as e:
@@ -60,7 +60,7 @@ def _get_completion(prompt: str,
 
 
 def sr_describe_doc_to_visual(doc):
-    return [VIDEO_DIR + doc["path_v"]]
+    return [DataPaths.RAW_VIDEO_DIR + doc["path_v"]]
 
 def sr_describe_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     prompt = (

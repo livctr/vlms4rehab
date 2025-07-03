@@ -1,6 +1,6 @@
 # Load StrokeRehab dataset from local
 dataset_kwargs:
-  use_dataset_builder: !function utils.strokerehab_load_primitives_data
+  use_dataset_builder: !function utils.strokerehab_load_C00015_dataset
 task: "strokerehab_primitives"
 test_split: test
 output_type: generate_until
@@ -8,11 +8,11 @@ doc_to_visual: !function utils_primitives.sr_primitives_doc_to_visual
 doc_to_text: !function utils_primitives.sr_primitives_doc_to_text
 doc_to_target: !function utils_primitives.sr_primitives_doc_to_target
 generation_kwargs:
-  max_new_tokens: 200  # Can be increase
+  max_new_tokens: 16  # Can be increase
   temperature: 0
   top_p: 1.0
   num_beams: 1
-  do_sample: true
+  do_sample: false
 process_results: !function utils_primitives.sr_primitives_process_results
 metric_list:
   - metric: edit_score
@@ -21,27 +21,45 @@ metric_list:
   - metric: action_error_rate
     aggregation: mean
     higher_is_better: false
-  - metric: avg_mae
+  - metric: mae_avg
     aggregation: mean
     higher_is_better: false
-  - metric: reach_mae
+  - metric: mae_reach
     aggregation: mean
     higher_is_better: false
-  - metric: reposition_mae
+  - metric: mae_reposition
     aggregation: mean
     higher_is_better: false
-  - metric: transport_mae
+  - metric: mae_transport
     aggregation: mean
     higher_is_better: false
-  - metric: stabilize_mae
+  - metric: mae_stabilize
     aggregation: mean
     higher_is_better: false
-  - metric: idle_mae
+  - metric: mae_idle
     aggregation: mean
     higher_is_better: false
+  - metric: count_truth
+    aggregation: mean
+  - metric: count_pred
+    aggregation: mean
+  - metric: count_reach
+    aggregation: mean
+  - metric: count_reposition
+    aggregation: mean
+  - metric: count_transport
+    aggregation: mean
+  - metric: count_stabilize
+    aggregation: mean
+  - metric: count_idle
+    aggregation: mean
+
+lmms_eval_specific_kwargs:
+  prompt: "ideal"  # "single_prediction", "single_motion_and_contact"
+  use_video_with_segmentations: false
 filter_list:
   - name: "combine-and-parse"
     filter:
-      - function: !function utils_primitives.CombineParseDedupFilter
+      - function: !function utils_primitives.OutputToResultsFilter
 metadata:
   version: 1.0

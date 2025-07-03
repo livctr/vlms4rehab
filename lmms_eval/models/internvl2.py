@@ -126,7 +126,7 @@ def load_video(video_path,
         ret_idx=True
     )
 
-    for frame_indices in frame_indices_gen:
+    for frame_indices, start_time_s, end_time_s in frame_indices_gen:
         pixel_values_list, num_patches_list = [], []
         for frame_index in frame_indices:
             img = Image.fromarray(vr[frame_index].asnumpy()).convert("RGB")
@@ -136,7 +136,7 @@ def load_video(video_path,
             num_patches_list.append(pixel_values.shape[0])
             pixel_values_list.append(pixel_values)
         pixel_values = torch.cat(pixel_values_list)
-        yield pixel_values, num_patches_list
+        yield pixel_values, num_patches_list, start_time_s, end_time_s
 
 
 import math
@@ -311,10 +311,22 @@ class InternVL2(lmms):
         return new_list
 
     def generate_until(self, requests) -> List[str]:
-        res = []
+        outputs = []
         pbar = tqdm(total=len(requests), disable=(self.rank != 0), desc="Model Responding")
 
         for contexts, gen_kwargs, doc_to_visual, doc_id, task, split in [reg.args for reg in requests]:
+
+            def separate_context(context: str):
+                if "<SEP>" not in context:
+                    return [context]
+                # Split the context by <SEP> and remove leading/trailing whitespace
+                parts = [part.strip() for part in context.split("<SEP>")]
+                # Remove empty parts
+                parts = [part for part in parts if part]
+                return parts
+            context_with_multiple_questions_list = separate_context(contexts)
+
+
             if "until" in gen_kwargs:
                 gen_kwargs.pop("until")
             for k, v in DEFAULT_GEN_KWARGS.items():
@@ -331,6 +343,7 @@ class InternVL2(lmms):
 
             visuals = [doc_to_visual(self.task_dict[task][split][doc_id])]
             visuals = self.flatten(visuals)
+            assert self.modality == "video"
             if self.modality == "image":
                 if visuals:
                     visuals = [load_image(visual).to(torch.bfloat16).cuda() for visual in visuals]
@@ -338,11 +351,20 @@ class InternVL2(lmms):
                     num_patches_list = [visual.size(0) for visual in visuals]
                     image_tokens = ["<image>"] * len(visuals)
                     image_tokens = " ".join(image_tokens)
-                    contexts = image_tokens + "\n" + contexts
+                    contexts = [
+                        image_tokens + "\n" + context for context in context_with_multiple_questions_list
+                    ]
                 else:
                     pixel_values = None
                     num_patches_list = None
-                response, history = self.model.chat(self.tokenizer, pixel_values, contexts, gen_kwargs, num_patches_list=num_patches_list, history=None, return_history=True)
+                
+                response, _ = [
+                    self.model.chat(self.tokenizer, pixel_values, contexts, gen_kwargs, num_patches_list=num_patches_list, history=None, return_history=True)[0]
+                    for contexts in context_with_multiple_questions_list
+                ]
+                response = " <SEP> ".join(response)
+                eval_logger.debug(f"Response: {response}")
+
             elif self.modality == "video":
                 assert len(visuals) == 1, f"Only one video is supported, but got {len(visuals)} videos."
                 video_path = visuals[0]
@@ -358,20 +380,25 @@ class InternVL2(lmms):
                     sampling_fps=self.sampling_fps,
                 )
 
-                outputs = []
-                for pixel_values, num_patches_list in video_gen:
+                video_window_outputs = []
+                for pixel_values, num_patches_list, start_time_s, end_time_s in video_gen:
                     pixel_values = pixel_values.to(torch.bfloat16).cuda()
                     video_prefix = "".join([f"Frame{i+1}: <image>\n" for i in range(len(num_patches_list))])
-                    question = video_prefix + contexts
-                    response, history = self.model.chat(self.tokenizer, pixel_values, question, gen_kwargs, num_patches_list=num_patches_list, history=None, return_history=True)
-                    outputs.append(response)
 
-            output_print = "\n".join(outputs)
+                    questions = [video_prefix + context for context in context_with_multiple_questions_list]
+                    response = [
+                        self.model.chat(self.tokenizer, pixel_values, question, gen_kwargs, num_patches_list=num_patches_list, history=None, return_history=True)[0]
+                        for question in questions
+                    ]
+                    response = " <SEP> ".join(response)
+                    video_window_outputs.append((response, start_time_s, end_time_s))
+
+            output_print = "\n".join([o[0] for o in video_window_outputs])
             eval_logger.debug(f"Response: {output_print}")
-            res.append(outputs)
+            outputs.append(video_window_outputs)
             pbar.update(1)
         pbar.close()
-        return res
+        return outputs
 
     def loglikelihood(self, requests: List[Instance]) -> List[Tuple[float, bool]]:
         assert False, "Not implemented yet."
