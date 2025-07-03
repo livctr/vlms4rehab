@@ -240,7 +240,7 @@ class OutputToResultsFilter:
                 prims, times = convert_motion_contact_to_primitives(
                     motion_and_contact,
                     times,
-                    future_window=5.
+                    future_window=2.0
                 )
             else:
                 prims, times = flatten_resps(resps[i])

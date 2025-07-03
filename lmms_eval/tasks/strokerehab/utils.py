@@ -21,6 +21,7 @@ strokerehab_load_dataset_S0001 = partial(strokerehab_load_dataset, patients='S00
 strokerehab_load_dataset_3patients = partial(strokerehab_load_dataset, patients='C00011,S0001,S0002')
 strokerehab_load_dataset_onerep = partial(strokerehab_load_dataset, reps='first')
 strokerehab_load_dataset_test = partial(strokerehab_load_dataset, filter_for_testset=True)
+strokerehab_load_dataset_test_subset = partial(strokerehab_load_dataset, filter_for_subsampled_testset=True)
 strokerehab_load_dataset_healthy = partial(strokerehab_load_dataset, patients=HEALTHY_PATIENTS)
 strokerehab_load_dataset_mild = partial(strokerehab_load_dataset, patients=MILD_PATIENTS)
 strokerehab_load_dataset_moderate = partial(strokerehab_load_dataset, patients=MODERATE_PATIENTS)
