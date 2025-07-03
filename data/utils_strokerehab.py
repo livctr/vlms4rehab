@@ -278,7 +278,7 @@ def string_to_resps(s: str, drop_duplicated: bool = True) -> tuple[tuple[str, ..
 
 
 def convert_motion_contact_to_primitives(
-    motion_and_contact, times, future_window=5.0
+    motion_and_contact, times, future_window=2.0
 ):
     """
     Args:

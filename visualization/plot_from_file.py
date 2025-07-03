@@ -414,7 +414,7 @@ if __name__ == '__main__':
     USE_SEG = False
     LABEL_IDS = ["GT", "Ideal", "SP", "SMC"]
     VIDEO_ID = 'C00015_deodrant1_1'
-    MODEL = 'llava_next_video_72b'
+    MODEL = 'nvila_8b'
     VID_DIR = DataPaths.SAM2_ANNOTATED_VIDEOS_PATH if USE_SEG else DataPaths.RAW_VIDEO_DIR
 
     orch = build_annotation_layout(
@@ -424,4 +424,4 @@ if __name__ == '__main__':
     )
 
     orch.show_layout('test_layout.png')
-    orch.write('test.mp4')
+    orch.write('test.png')
