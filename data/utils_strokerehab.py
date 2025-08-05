@@ -22,11 +22,14 @@ MODERATE_PATIENTS = (
 SEVERE_PATIENTS = (
     "S00021,S00029,S00031,S00034,S00049,S00050,S00051,S00055"
 )
-PATIENTS = (
-    HEALTHY_PATIENTS + "," + \
+AFFECTED_PATIENTS = (
     MILD_PATIENTS + "," + \
     MODERATE_PATIENTS + "," + \
     SEVERE_PATIENTS
+)
+PATIENTS = (
+    AFFECTED_PATIENTS + "," + \
+    HEALTHY_PATIENTS
 )
 
 
@@ -37,23 +40,21 @@ class DataPaths:
     RAW_VIDEO_DIR = os.path.join(DATA_DIR, "VideoData/rawVideosADLsandFM")
     RAW_LABEL_DIR = os.path.join(DATA_DIR, "rawVideoLabels")
 
-    METADATA_DIR = os.path.join(DATA_DIR, "metadata")
+    METADATA_DIR = os.path.join(DATA_DIR, "primitives_metadata")
     METADATA_PATH = os.path.join(METADATA_DIR, "metadata.csv")
     VIDEO_METADATA_PATH = os.path.join(METADATA_DIR, "video_metadata.csv")
     LABEL_METADATA_PATH = os.path.join(METADATA_DIR, "label_metadata.csv")
 
-    CLEANED_METADATA_PATH = os.path.join("./data/public/cleaned_metadata.csv")
+    FP_METADATA_PATH = os.path.join("./data/fp/fp_metadata.csv")
+    IA_CLIPS_PATH = os.path.join("./data/ia/fm_item_clips.csv")
 
-    VERIFICATION_PATH = os.path.join(DATA_DIR, "video_n_labels")
-
-    HUMAN_INPUT_JSON_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoDataSam2Annotations/human_input.json"
-
-    SAM2_ANNOTATED_VIDEOS_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__data/VideoDataSam2Annotations/"
-
-    ACTIVITY_GROUND_TRUTH_PATH = "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/cvfm4rehab/data/public/activities_ground_truth.yaml"
+    # the folder structure of the IA raw and clipped dirs mirrors that of the raw video dir
+    IA_VIDEO_DIR = os.path.join(DATA_DIR, "VideoDataDerived/FMVideoClips/")
+    IA_RAW_VIDEO_DIR = os.path.join(IA_VIDEO_DIR, "rawVideos/")
+    IA_CLIPPED_VIDEO_DIR = os.path.join(IA_VIDEO_DIR, "clippedVideos/")
 
 
-def strokerehab_load_dataset(
+def load_strokerehab_primitives_dataset(
         patients='all', activity='all', reps='all',
         filter_for_testset=False, filter_for_subsampled_testset=False,
         video_regex=None):
@@ -70,7 +71,7 @@ def strokerehab_load_dataset(
         reps (str): Either 'all' or 'first'.
         filter_for_testset (bool): If True, include only the VIDEOS in the test set of
             the original StrokeRehab paper. https://pubmed.ncbi.nlm.nih.gov/37766938/
-            This data is located in './data/public/strokerehab_test_set.txt' and already
+            This data is located in './data/fp/strokerehab_test_set.txt' and already
             incorporated into the CSV metadata file.
         filter_for_subsampled_testset (bool): If True, include only the VIDEOS in the
             subsampled test set of the original StrokeRehab paper. 50 videos total. A subset of the
@@ -81,7 +82,7 @@ def strokerehab_load_dataset(
     Returns:
         dataset (datasets.Dataset): The StrokeRehab dataset with the specified filters applied.
     """
-    df = pd.read_csv(DataPaths.CLEANED_METADATA_PATH)
+    df = pd.read_csv(DataPaths.FP_METADATA_PATH)
     if video_regex is not None:
         df = df[df['path_v'].str.contains(video_regex)]
     else:
@@ -105,7 +106,7 @@ def strokerehab_load_dataset(
 
 
 ##################### Metadata Utilities #####################
-class LabelUtils:
+class PrimitiveLabelUtils:
 
     PRIMITIVES = ["reach", "reposition", "transport", "stabilize", "idle"]
 
@@ -343,3 +344,6 @@ def convert_motion_contact_to_primitives(
 
     # return the new primitives list, and the original times unchanged
     return primitives, times
+
+
+### Utils for 

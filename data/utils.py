@@ -15,8 +15,6 @@ import torch
 from tqdm import tqdm
 
 from data.utils_strokerehab import DataPaths
-from decord import VideoReader, cpu
-
 
 
 def return_np_save_path(label_file_path, save_dir):

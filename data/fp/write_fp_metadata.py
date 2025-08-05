@@ -1,15 +1,152 @@
 """
-Merges action label and video metadata. Only keeps pairs with exact alignment, i.e.,
-the number of labels equals the number of frames in video's metadata and from
-looping. See `nbs/merge_metadata.ipynb`.
+Creates the metadata for the functional primitives task. See
+"./data/fp/fp_metadata.csv" for the final output.
 """
-from .write_action_metadata import write_label_metadata
-from .write_video_metadata import write_video_metadata
-
+import cv2
+import logging
 import pandas as pd
+import regex as re
+from collections import Counter
+from functools import partial
 
-from data.utils import extract_folder_file_from_path
+from data.utils import extract_folder_file_from_path, write_metadata
 from data.utils_strokerehab import DataPaths
+
+
+def cnt_frames_av(path):
+    import av
+    container = av.open(path)
+    return sum(1 for _ in container.decode(video=0))
+
+
+def get_codec_av(file_path):
+    import av
+    container = av.open(file_path)
+    video_stream = next((s for s in container.streams if s.type == 'video'), None)
+    codec = video_stream.codec_context.name if video_stream else None
+    return codec
+
+
+def get_video_info(path):
+    try:
+        cap = cv2.VideoCapture(path)
+        cv2_nframes = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+        # Count frames using cv2 while loop
+        while_loop_cnt = 0
+        while True:
+            ret, _ = cap.read()
+            if not ret:
+                break
+            while_loop_cnt += 1
+        
+        # get count from av
+        av_cnt = cnt_frames_av(path)
+
+        cap.release()
+        return {
+            "path": path,
+            "codec": get_codec_av(path),
+            "fps": fps,
+            "height": height,
+            "width": width,
+            "duration": cv2_nframes / fps if fps > 0 else None,
+            "av_nframes": av_cnt,
+            "cv2_nframes": cv2_nframes,
+            "cv2_nframes_while_loop": while_loop_cnt,
+            "aligned_nframes": cv2_nframes == while_loop_cnt == av_cnt,
+        }
+    except Exception as e:
+        logging.warning(f"Error processing {path}: {e}")
+        return None
+
+
+def write_video_metadata():
+    """
+    Writes video metadata in folder `DataPaths.RAW_VIDEO_DIR` to
+    `DataPaths.VIDEO_METADATA_PATH`.
+    """
+    write_metadata(DataPaths.RAW_VIDEO_DIR, DataPaths.VIDEO_METADATA_PATH, get_video_info)
+
+
+def fill_gap(path: str, fps: int = -1, verbose: bool = False):
+    """Returns a list of times and actions from a csv file.
+
+    Some files have gaps in the time. If the surrounding actions are identical,
+    the gap is filled with the same action. Otherwise, it is filled with an empty string.
+
+    If `fps` is provided, the function will check if the gap size is consistent with the fps.
+    """
+
+    df = pd.read_csv(path)
+    times = df['Time_s'].tolist()
+    actions = df['MarkerNames'].tolist()
+
+    # Get time differences
+    time_diff_ms = [round(1000 * (times[i+1] - times[i])) for i in range(len(times)-1)]
+
+    # Verify gap size with provided fps
+    gap_freqs = Counter(time_diff_ms).most_common(2)
+    inferred_ms_gap = tuple(gf[0] for gf in gap_freqs)
+    if len(inferred_ms_gap) == 1:
+        inferred_ms_gap = (inferred_ms_gap[0], inferred_ms_gap[0])
+    if fps != -1:
+        expected_ms_gaps = (int(1000 / fps), int(1000 / fps) + 1)
+        # no overlap
+        if inferred_ms_gap[0] not in expected_ms_gaps and \
+            inferred_ms_gap[1] not in expected_ms_gaps:
+            logging.warning(f'Gap in data {inferred_ms_gap}-ms does not match expected '
+                            f'gap {expected_ms_gaps} from fps={fps} for {path}.')
+
+    gap_idxs = []
+    for i, t in enumerate(time_diff_ms):
+        if t != inferred_ms_gap[0] and t != inferred_ms_gap[1]:
+            gap_idxs.append(i)
+            if verbose:
+                gap_print_out = list(zip(times[i-1:i+3], actions[i-1:i+3])) \
+                    if i > 1 and i+3 <= len(times) else ""
+                logging.warning(f'Filled unexpected gap {t}-ms (fps={fps}) between frames '
+                                f'at index {i} and {i+1} in {path}: {gap_print_out}.')
+
+    if verbose and len(gap_idxs) > 3:
+        logging.warning(f'Found {len(gap_idxs)} unexpected gaps in the file. Please manually check {path}.')
+
+    for i in gap_idxs[::-1]:
+        times.insert(i+1, round(times[i] + 1 / fps, 3))
+        if actions[i] == actions[i+1]:
+            actions.insert(i+1, actions[i])
+        else:
+            actions.insert(i+1, '')
+
+    return times, actions
+
+
+def get_label_info(path: str, fps: int = -1, verbose: bool = False):
+    """Get csv label info. Use nonnegative fps to verify time gaps."""
+    times, _ = fill_gap(path, fps, verbose)
+
+    folder, file = extract_folder_file_from_path(path)
+    patient = folder
+    stroke = folder[0] == 'S'
+    activity = re.sub(r'\d', '', file.split('_')[1])
+
+    return {
+        "path": path, "tstart": times[0], "tend": times[-1], "nlabels": len(times),
+        "patient": patient, "stroke": stroke, "activity": activity,
+    }
+
+
+def write_label_metadata(**kwargs):
+    """
+    Writes video metadata in folder `DataPaths.RAW_LABEL_DIR` to
+    `DataPaths.LABEL_METADATA_PATH`. See `get_label_info` for kwargs.
+    """
+    fn = partial(get_label_info, **kwargs)
+    write_metadata(DataPaths.RAW_LABEL_DIR, DataPaths.LABEL_METADATA_PATH, fn)
+    print(f"Wrote metadata to {DataPaths.LABEL_METADATA_PATH}.")
 
 
 def filter_metadata(df):
@@ -188,8 +325,8 @@ def clean_metadata():
     # subset_df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
     # subset_df = subset_df[cols]
 
-    df.to_csv("./data/public/cleaned_metadata.csv", index=False)
-    # subset_df.to_csv("./data/csvs_and_txts/cleaned_metadata_subset.csv", index=False)
+    df.to_csv("./data/fp/fp_metadata.csv", index=False)
+    # subset_df.to_csv("./data/csvs_and_txts/fp_metadata_subset.csv", index=False)
 
 
 if __name__ == "__main__":
