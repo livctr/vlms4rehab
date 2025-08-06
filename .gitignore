@@ -12,6 +12,8 @@ test_images/
 test_images_out/
 test_videos_out/
 
+.vscode
+
 # For data pipeline
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 frontend/node_modules

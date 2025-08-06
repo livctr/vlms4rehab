@@ -25,8 +25,8 @@ from pathlib import Path
 
 # --- REQUIRED FM ITEMS -------------------------------------------------------
 REQUIRED_ITEMS: set[str] = {
-    "3-8L", "3-8R",
-    "9-11L", "9-11R",
+    "3_8L", "3_8R",
+    "9_11L", "9_11R",
     "12L", "12R",
     "13L", "13R",
     "14L", "14R",
@@ -39,15 +39,14 @@ REQUIRED_ITEMS: set[str] = {
     "21L", "21R",
     "22L", "22R",
     "23L", "23R",
-    "24-25L", "24-25R",
+    "24_25L", "24_25R",
     "26L", "26R",
     "27L", "27R",
     "28L", "28R",
     "29L", "29R",
     "30L", "30R",
-    "31-33L", "31-33R",
+    "31_33L", "31_33R",
 }
-
 # -----------------------------------------------------------------------------
 
 
@@ -88,6 +87,7 @@ def validate_one(id_to_check: str, rows: list[tuple[str, str, int]]) -> list[str
     fm_to_lines: defaultdict[str, list[int]] = defaultdict(list)
     for sid, fm_item, line_no in rows:
         if sid == id_to_check:
+            fm_item = fm_item.replace("-", "_")
             fm_to_lines[fm_item].append(line_no)
 
     if not fm_to_lines:
