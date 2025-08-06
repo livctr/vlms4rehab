@@ -17,7 +17,8 @@
 
 **Data**
 - `ANNOT_TODO.txt`: still need to annotate all these patient's IA videos.
-- `fm_item_clips.csv`: the clip times in the raw FM (Fugl-Meyer assessment) videos.
+- `fm_item_clips.csv`: the clip times in the raw FM (Fugl-Meyer assessment) videos. Manually created.
+- `fm_videos.txt`: the list of paths pointing to the video clips created using `fm_item_clips.csv`. The "final" output.
 - `fm_item_scores.csv`: the patient-item breakdown of scores
 
 **Script(s)**

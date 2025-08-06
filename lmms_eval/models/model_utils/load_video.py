@@ -8,7 +8,6 @@ import numpy as np
 from av.codec.context import CodecContext
 from decord import VideoReader, cpu
 from PIL import Image
-
 from loguru import logger as eval_logger
 
 

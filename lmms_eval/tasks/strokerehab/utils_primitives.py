@@ -1,3 +1,5 @@
+
+from functools import partial
 import os
 import re
 import numpy as np
@@ -6,8 +8,13 @@ from Levenshtein import distance as levenshtein_distance
 from loguru import logger as eval_logger
 
 from data.utils_strokerehab import (
-    DataPaths, LabelUtils, resps_to_string, string_to_resps,
-    convert_motion_contact_to_primitives
+    DataPaths, PrimitiveLabelUtils, resps_to_string, string_to_resps,
+    convert_motion_contact_to_primitives,
+    load_strokerehab_primitives_dataset,
+    HEALTHY_PATIENTS,
+    MILD_PATIENTS,
+    MODERATE_PATIENTS,
+    SEVERE_PATIENTS,
 )
 
 
@@ -39,7 +46,7 @@ def _get_primitives_score(pred, ref):
     # LabelUtils.PRIMITIVES
     mae_dict = {}
     maes = []
-    for primitive in LabelUtils.PRIMITIVES:
+    for primitive in PrimitiveLabelUtils.PRIMITIVES:
         pred_cnt = pred.count(primitive)
         ref_cnt = ref.count(primitive)
         mae = abs(pred_cnt - ref_cnt)
@@ -52,8 +59,8 @@ def _get_primitives_score(pred, ref):
     else:
         avg_mae = sum(maes) / len(maes)
     mae_dict["mae_avg"] = avg_mae
-    mae_dict["count_truth"] = sum(ref.count(primitive) for primitive in LabelUtils.PRIMITIVES)
-    mae_dict["count_pred"] = sum(pred.count(primitive) for primitive in LabelUtils.PRIMITIVES)
+    mae_dict["count_truth"] = sum(ref.count(primitive) for primitive in PrimitiveLabelUtils.PRIMITIVES)
+    mae_dict["count_pred"] = sum(pred.count(primitive) for primitive in PrimitiveLabelUtils.PRIMITIVES)
 
     return {
         "edit_score": edit_score,
@@ -62,20 +69,7 @@ def _get_primitives_score(pred, ref):
     }
 
 def sr_primitives_doc_to_visual(doc, lmms_eval_specific_kwargs=None):
-
-    if "use_video_with_segmentations" not in lmms_eval_specific_kwargs:
-        raise ValueError(
-            "I thought this would work? Just like with doc_to_text."
-        )
-
-    use_video_with_segmentations = lmms_eval_specific_kwargs.get("use_video_with_segmentations", False)
-
-    if use_video_with_segmentations:
-        # Use video with segmentations
-        tracked_name = doc["path_v"].split(".")[0] + "_tracked.mp4"
-        return [os.path.join(DataPaths.SAM2_ANNOTATED_VIDEOS_PATH, tracked_name)]
-    else:
-        return [os.path.join(DataPaths.RAW_VIDEO_DIR, doc["path_v"])]
+    return [os.path.join(DataPaths.RAW_VIDEO_DIR, doc["path_v"])]
 
 
 def sr_primitives_doc_to_text(doc, lmms_eval_specific_kwargs=None):
@@ -87,7 +81,7 @@ def sr_primitives_doc_to_text(doc, lmms_eval_specific_kwargs=None):
     if use_video_with_segmentations:
         which_hand = "highlighted hand in RED"
     else:
-        which_hand = LabelUtils.get_handedness(os.path.join(DataPaths.RAW_LABEL_DIR, doc["path_l"])).upper() + " hand"
+        which_hand = PrimitiveLabelUtils.get_handedness(os.path.join(DataPaths.RAW_LABEL_DIR, doc["path_l"])).upper() + " hand"
 
     if prompt == "ideal":
         # Use the original prompt without motion and contact
@@ -131,7 +125,7 @@ def sr_primitives_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
 def sr_primitives_doc_to_target(doc):
     csv_path = os.path.join(DataPaths.RAW_LABEL_DIR, doc["path_l"])
-    gt_primitives, gt_times = LabelUtils.convert_labels_to_prims_times(csv_path)
+    gt_primitives, gt_times = PrimitiveLabelUtils.convert_labels_to_prims_times(csv_path)
     return resps_to_string(gt_primitives, gt_times)  # Ensure the format is correct
 
 
@@ -248,3 +242,21 @@ class OutputToResultsFilter:
             string = resps_to_string(prims, times)
             resps_filtered.append(string)
         return resps_filtered
+
+
+strokerehab_load_dataset_C00015 = partial(load_strokerehab_primitives_dataset,
+                                     patients='C00015',
+                                     activity='brushing,combing,deodrant,drinking,feeding,glasses',
+                                     reps='first')
+strokerehab_load_dataset_debug = partial(load_strokerehab_primitives_dataset, patients='S0001', activity='face wash', reps='first')
+strokerehab_load_dataset_S0001_small = partial(load_strokerehab_primitives_dataset, patients='S0001', reps='first')
+strokerehab_load_dataset_S0001 = partial(load_strokerehab_primitives_dataset, patients='S0001')
+strokerehab_load_dataset_3patients = partial(load_strokerehab_primitives_dataset, patients='C00011,S0001,S0002')
+strokerehab_load_dataset_onerep = partial(load_strokerehab_primitives_dataset, reps='first')
+strokerehab_load_dataset_test = partial(load_strokerehab_primitives_dataset, filter_for_testset=True)
+strokerehab_load_dataset_test_subset = partial(load_strokerehab_primitives_dataset, filter_for_subsampled_testset=True)
+strokerehab_load_dataset_healthy = partial(load_strokerehab_primitives_dataset, patients=HEALTHY_PATIENTS)
+strokerehab_load_dataset_mild = partial(load_strokerehab_primitives_dataset, patients=MILD_PATIENTS)
+strokerehab_load_dataset_moderate = partial(load_strokerehab_primitives_dataset, patients=MODERATE_PATIENTS)
+strokerehab_load_dataset_severe = partial(load_strokerehab_primitives_dataset, patients=SEVERE_PATIENTS)
+strokerehab_load_primitives_data = partial(load_strokerehab_primitives_dataset, patients='S0001', activity='brushing,combing', reps='first')

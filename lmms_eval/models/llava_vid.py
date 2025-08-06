@@ -33,11 +33,13 @@ from loguru import logger as eval_logger
 from PIL import Image
 from tqdm import tqdm
 from transformers import AutoConfig, AutoModelForCausalLM
+from transformers.cache_utils import DynamicCache
 
 from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 from lmms_eval.models.model_utils.load_video import read_video_pyav, load_long_video_decord
+from lmms_eval.models.model_utils.caching import longest_common_prefix_len
 
 AutoConfig.register("llava_llama", LlavaConfig)
 AutoConfig.register("llava_qwen", LlavaQwenConfig)
@@ -365,15 +367,36 @@ class LlavaVid(lmms):
             built_contexts = [build_context(context) for context in context_with_multiple_questions_list]
 
             outputs = []
+            # import pdb ; pdb.set_trace()
             for video, start_time_s, end_time_s in videos:
+                import time
+                start = time.time()
                 video = build_video(video)
                 window_outputs = []
-                for input_ids, attention_masks, stopping_criteria, cur_prompt in built_contexts:
+
+                # Force prefill KV cache
+                prefix_len, suffix_lens = longest_common_prefix_len([bc[0] for bc in built_contexts])
+                prefix_cache = DynamicCache()
+
+                with torch.no_grad():
+                    prefix_cache = self.model(
+                        input_ids=built_contexts[0][0][:, :prefix_len],
+                        images=[video],
+                        past_key_values=prefix_cache,
+                        use_cache=True,
+                        modalities="video"
+                    ).past_key_values
+
+                for i, (input_ids, attention_masks, stopping_criteria, cur_prompt) in enumerate(built_contexts):
                     with torch.inference_mode():
+                        if self.use_cache and i > 0:
+                            prefix_cache.crop(-suffix_lens[i-1]-len(output_ids[0]))
+                        # past_kv = copy.deepcopy(prefix_cache)
                         output_ids = self.model.generate(
                             inputs=input_ids,
                             images=[video],
                             attention_mask=attention_masks,
+                            past_key_values=prefix_cache,
                             modalities="video",
                             use_cache=self.use_cache,
                             stopping_criteria=[stopping_criteria],
@@ -385,8 +408,12 @@ class LlavaVid(lmms):
                         )
                     output = self.tokenizer.batch_decode(output_ids, skip_special_tokens=True)[0].strip()
                     window_outputs.append(output)
+                del prefix_cache
+                torch.cuda.empty_cache()
                 window_outputs = " <SEP> ".join(window_outputs)
                 outputs.append((window_outputs, start_time_s, end_time_s))
+                end = time.time()
+                eval_logger.warning(f"One video costs {end - start} seconds")
 
             eval_logger.debug(f"Question: {cur_prompt}")
             outputs_print = "\n".join([f"{out[0]} (start: {out[1]}, end: {out[2]})" for out in outputs])

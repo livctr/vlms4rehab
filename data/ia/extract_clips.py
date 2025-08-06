@@ -1,4 +1,5 @@
 import csv
+import re
 import subprocess
 from pathlib import Path
 
@@ -9,10 +10,10 @@ def ensure_dir(p: Path):
     p.mkdir(parents=True, exist_ok=True)
 
 
-def extract_clips_from_csv(csv_path: str):
-    with open(csv_path, newline='') as f:
+def extract_clips_from_csv():
+    with open(DataPaths.IA_CLIPS_PATH, newline='') as f:
         reader = csv.reader(f, delimiter=';')
-        header = next(reader, None)  # skip header if present
+        _ = next(reader, None)  # skip header if present
 
         for row in reader:
             if len(row) != 3:
@@ -28,12 +29,8 @@ def extract_clips_from_csv(csv_path: str):
                 print(f"❌  Input not found: {input_path}")
                 continue
 
-            # fm_item like "3-8,L"
-            try:
-                fm_range_raw, side = fm_item.split(',', 1)
-            except ValueError:
-                print(f"⚠️  Bad fm_item format, skipping: {fm_item}")
-                continue
+            # fm_item like "3-8L"
+            fm_range_raw, side = fm_item[:-1], fm_item[-1]
             fm_range = fm_range_raw.replace('-', '_')  # "3-8" → "3_8"
 
             # parse times "s:10.34,e:13.73,s:17.07,e:19.07,…"
@@ -73,5 +70,21 @@ def extract_clips_from_csv(csv_path: str):
                 print(f"🎬 Extracting clip {clip_idx:02d}: {start} → {end} → {output_path}")
                 subprocess.run(cmd, check=True)
 
+
+def write_ia_video_list():
+    clipped_dir = Path(DataPaths.IA_CLIPPED_VIDEO_DIR)
+    output_path = Path(DataPaths.IA_VIDEO_LIST_PATH)
+
+    # Find all .mp4 files recursively
+    mp4_files = clipped_dir.rglob("*.mp4")
+
+    # Compute relative paths
+    rel_paths = [str(p.relative_to(clipped_dir)) for p in mp4_files]
+
+    # Write to output file
+    output_path.write_text("\n".join(rel_paths))
+
+
 if __name__ == "__main__":
-    extract_clips_from_csv(DataPaths.IA_CLIPS_PATH)
+    extract_clips_from_csv()
+    write_ia_video_list()

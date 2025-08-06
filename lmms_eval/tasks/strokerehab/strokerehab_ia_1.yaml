@@ -1,0 +1,18 @@
+# Load StrokeRehab dataset from local
+dataset_kwargs:
+  use_dataset_builder: !function utils.strokerehab_load_ia_dataset_S0001_first  # load_strokerehab_ia_dataset
+task: "strokerehab_ia_1"
+test_split: test
+output_type: generate_until
+doc_to_visual: !function utils_impairment_analysis.sr_ia_doc_to_visual
+doc_to_text: !function utils_impairment_analysis.sr_ia_doc_to_text
+doc_to_target: !function utils_impairment_analysis.sr_ia_doc_to_target
+generation_kwargs:
+  max_new_tokens: 128  # Can be increase
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: false
+process_results: !function utils_impairment_analysis.sr_ia_process_results
+metadata:
+  version: 1.0
