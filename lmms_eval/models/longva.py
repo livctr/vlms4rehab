@@ -568,7 +568,7 @@ class LongVA(lmms):
             pbar.update(1)
 
         # reorder this group of results back to original unsorted form
-        # res = re_ords.get_original(res)
+        res = re_ords.get_original(res)
 
         pbar.close()
         return res

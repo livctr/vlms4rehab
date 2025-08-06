@@ -63,7 +63,7 @@ def concat_pair_clip(
     out_name = f"{patient}_FM{fm_range}_LR{label}_{clip_idx:02d}.mp4"
     out_path = out_dir / out_name
     if out_path.exists():
-        print(f"✅  Concatenated exists: {out_path}, skipping.")
+        # print(f"✅  Concatenated exists: {out_path}, skipping.")
         return
 
     filter_complex = pad0 + pad1 + stack
@@ -124,7 +124,7 @@ def extract_clips_from_csv():
             clips_map.setdefault((patient, fm_range), {}).setdefault(side, []).append(out_path)
 
             if out_path.exists():
-                print(f"✅  Clip exists: {out_path}, skipping.")
+                # print(f"✅  Clip exists: {out_path}, skipping.")
                 continue
 
             cmd = [
@@ -212,7 +212,7 @@ def write_ia_video_metadata():
         side_affected = row['side_affected']
 
         seen = False
-        for fm in range(fm_low + fm_high + 1):
+        for fm in range(fm_low, fm_high + 1):
             # First break down by what the video attempts to show
             if side_shown == 'L':  # the video shows 'L'
                 if f"{fm}_I" in fm_videos_with_questions and side_affected == 'Left':
@@ -240,5 +240,5 @@ def write_ia_video_metadata():
 
 
 if __name__ == "__main__":
-    # extract_clips_from_csv()
+    extract_clips_from_csv()
     write_ia_video_metadata()

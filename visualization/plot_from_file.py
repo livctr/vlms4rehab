@@ -32,7 +32,7 @@ from typing import Dict, Any
 
 import os
 from typing import Dict, List
-from data.utils_strokerehab import DataPaths, LabelUtils
+from data.utils_strokerehab import DataPaths, PrimitiveLabelUtils
 from vidplot.core import StaticDataStreamer, AnnotationOrchestrator
 from vidplot.streamers import VideoStreamer, LabelBarStreamer
 from vidplot.renderers import StringRenderer, RGBRenderer, LabelBarRenderer
@@ -235,7 +235,7 @@ def get_prims_times_for(
     If missing, returns ([], []).
     """
     if scenario == 'GT':
-        prims, times = LabelUtils.convert_labels_to_prims_times(
+        prims, times = PrimitiveLabelUtils.convert_labels_to_prims_times(
             full_label, duplicate_last_prim=True
         )
         return [p.lower() for p in prims], times
@@ -257,7 +257,7 @@ def get_prims_times_for(
         resps = info.get('resps', [])
         if not resps:
             return [], []
-        motions, contacts, mc_times = LabelUtils.parse_yes_segments(resps[0])
+        motions, contacts, mc_times = PrimitiveLabelUtils.parse_yes_segments(resps[0])
         labels = ['motion' if m else 'no_motion' for m in motions]
         return labels, mc_times
 
@@ -278,7 +278,7 @@ def get_prims_times_motion_contact(label_id: str):
         path_l = load_sample_results_by_id(sample_info_path)[VIDEO_ID]['path_l']
         full_path_v = os.path.join(VID_DIR, path_v)
         full_path_l = os.path.join(DataPaths.RAW_LABEL_DIR, path_l)
-        prims, times = LabelUtils.convert_labels_to_prims_times(full_path_l, duplicate_last_prim=True)
+        prims, times = PrimitiveLabelUtils.convert_labels_to_prims_times(full_path_l, duplicate_last_prim=True)
 
     else:  # label_id in ["Ideal", "SP", "SMC"]:
         sample_info_path = latest_run_files[label_id_to_scenario[label_id]][MODEL]['samples']
@@ -333,7 +333,7 @@ def build_annotation_layout(
     streamers, renderers = [], []
     row = 1
     # Title
-    title_txt = f"Video: {video_id} ({LabelUtils.get_handedness(full_label)} hand)"
+    title_txt = f"Video: {video_id} ({PrimitiveLabelUtils.get_handedness(full_label)} hand)"
     ts = StaticDataStreamer('title', title_txt)
     tr = StringRenderer('title', ts, grid_row=(row,row), grid_column=(1,1))
     streamers.append(ts); renderers.append(tr)

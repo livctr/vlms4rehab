@@ -441,7 +441,7 @@ class Llava_OneVision(lmms):
             res.append(outputs)
             self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)
             pbar.update(1)
-            # reorder this group of results back to original unsorted form
+        # reorder this group of results back to original unsorted form
         res = re_ords.get_original(res)
 
         pbar.close()
