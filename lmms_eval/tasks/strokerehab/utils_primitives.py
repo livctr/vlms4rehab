@@ -4,13 +4,14 @@ import os
 import re
 import numpy as np
 
+import datasets
+import pandas as pd
+
 from Levenshtein import distance as levenshtein_distance
 from loguru import logger as eval_logger
 
 from data.utils_strokerehab import (
     DataPaths, PrimitiveLabelUtils, resps_to_string, string_to_resps,
-    convert_motion_contact_to_primitives,
-    load_strokerehab_primitives_dataset,
     HEALTHY_PATIENTS,
     MILD_PATIENTS,
     MODERATE_PATIENTS,
@@ -214,6 +215,74 @@ def flatten_sep_resps_keep_full(resps):
     return tokens, times
 
 
+def _convert_motion_contact_to_primitives(
+    motion_and_contact, times, future_window=2.0
+):
+    """
+    Args:
+        motion_and_contact: list of length n, each either
+            - "Yes <SEP> Yes" strings, or
+            - 2-tuples ("Yes"/"No", "Yes"/"No")
+        times: list or tuple of floats of length n+1; times[i] is the start
+            of segment i, times[i+1] its end.
+        future_window: how many seconds ahead to scan for contact to label 'reach'
+    
+    Returns:
+        primitives: list of str of length n, one of
+            ["reach","reposition","transport","stabilize","idle"]
+        times: the exact same list/tuple you passed in (length n+1)
+    """
+    n = len(motion_and_contact)
+    assert len(times) == n + 1, "times must be one longer than motion_and_contact"
+
+    # parse Yes/No into booleans
+    motion_flags = []
+    contact_flags = []
+    for mc in motion_and_contact:
+        if isinstance(mc, str):
+            mot_str, con_str = mc.split("<SEP>")
+            motion = "yes" in mot_str.strip().lower()
+            contact = "yes" in con_str.strip().lower()
+        else:
+            motion = ("yes" in mc[0].strip().lower())
+            contact = ("yes" in mc[1].strip().lower())
+        motion_flags.append(motion)
+        contact_flags.append(contact)
+
+    primitives = []
+    start_times = times[:-1]  # length n
+
+    for i in range(n):
+        t0 = start_times[i]
+        m = motion_flags[i]
+        c = contact_flags[i]
+
+        if m and not c:
+            # scan ahead up to future_window
+            reach = False
+            j = i + 1
+            while j < n and (start_times[j] - t0) <= future_window:
+                if contact_flags[j]:
+                    reach = True
+                    break
+                j += 1
+            prim = "reach" if reach else "reposition"
+
+        elif m and c:
+            prim = "transport"
+
+        elif not m and c:
+            prim = "stabilize"
+
+        else:  # not m and not c
+            prim = "idle"
+
+        primitives.append(prim)
+
+    # return the new primitives list, and the original times unchanged
+    return primitives, times
+
+
 class OutputToResultsFilter:
 
     def __init__(self):
@@ -231,7 +300,7 @@ class OutputToResultsFilter:
         for i in range(len(resps)):
             if "<SEP>" in resps[0][0][0][0]:
                 motion_and_contact, times = flatten_sep_resps_keep_full(resps[i])
-                prims, times = convert_motion_contact_to_primitives(
+                prims, times = _convert_motion_contact_to_primitives(
                     motion_and_contact,
                     times,
                     future_window=2.0
@@ -242,6 +311,57 @@ class OutputToResultsFilter:
             string = resps_to_string(prims, times)
             resps_filtered.append(string)
         return resps_filtered
+
+
+def load_strokerehab_primitives_dataset(
+        patients='all', activity='all', reps='all',
+        filter_for_testset=False, filter_for_subsampled_testset=False,
+        video_regex=None):
+    """
+    Loads the StrokeRehab dataset from a cleaned metadata file and applies AND-ed filters.
+
+    Args:
+        patients (str): The patient IDs to include in the dataset. Default is 'all'.
+            If specifying individual patients, separate them with commas
+            Example: 'S0001,S0002'
+        activity (str): The activity names to include in the dataset. Default is 'all' (11 total).
+            If specifying individual activities, separate them with commas
+            Example: 'RTT left side,RTT right side,brushing,combing,deodrant,drinking,face wash,feeding,glasses,shelf left side,shelf right side'
+        reps (str): Either 'all' or 'first'.
+        filter_for_testset (bool): If True, include only the VIDEOS in the test set of
+            the original StrokeRehab paper. https://pubmed.ncbi.nlm.nih.gov/37766938/
+            This data is located in './data/fp/strokerehab_test_set.txt' and already
+            incorporated into the CSV metadata file.
+        filter_for_subsampled_testset (bool): If True, include only the VIDEOS in the
+            subsampled test set of the original StrokeRehab paper. 50 videos total. A subset of the
+            original test set, which is ~515 videos.
+        video_regex (str): A regex pattern to filter video paths. If provided, this will override
+            the patient and activity filters. This is useful for loading specific videos based on their paths.
+    
+    Returns:
+        dataset (datasets.Dataset): The StrokeRehab dataset with the specified filters applied.
+    """
+    df = pd.read_csv(DataPaths.FP_METADATA_PATH)
+    if video_regex is not None:
+        df = df[df['path_v'].str.contains(video_regex)]
+    else:
+        if patients != 'all':
+            patients = patients.split(',')
+            df = df[df['patient'].isin(patients)]
+        if activity != 'all':
+            activity = activity.split(',')
+            df = df[df['activity'].isin(activity)]
+        if reps != 'all':
+            if reps != 'first':
+                raise ValueError("Invalid value for reps. Must be 'all' or 'first'.")
+            df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
+        if filter_for_testset:
+            df = df[df['is_in_strokerehab_test_set']]
+        if filter_for_subsampled_testset:
+            df = df[df['subsampled_test_set']]
+    dataset = datasets.Dataset.from_pandas(df)
+    dataset_dict = datasets.DatasetDict({'test': dataset})
+    return dataset_dict
 
 
 strokerehab_load_dataset_C00015 = partial(load_strokerehab_primitives_dataset,

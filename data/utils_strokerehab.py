@@ -3,7 +3,6 @@ from typing import Optional, Tuple, List
 import os
 
 import pandas as pd
-import datasets
 
 
 HEALTHY_PATIENTS = (
@@ -46,142 +45,15 @@ class DataPaths:
     LABEL_METADATA_PATH = os.path.join(METADATA_DIR, "label_metadata.csv")
 
     FP_METADATA_PATH = os.path.join("./data/fp/fp_metadata.csv")
-    IA_VIDEO_LIST_PATH = os.path.join("./data/ia/fm_videos.txt")
-    IA_METADATA_PATH = os.path.join("./data/ia/ia_metadata.csv")
-    IA_CLIPS_PATH = os.path.join("./data/ia/fm_item_clips.csv")
+    IA_VIDEO_METADATA_PATH = os.path.join("./data/ia/ia_video_metadata.csv")
+    IA_CLIPS_PATH = os.path.join("./data/ia/fm_item_clip_times.csv")
+    IA_SCORES_PATH = os.path.join("./data/ia/fm_item_scores.csv")
+    IA_QUESTIONS_PATH = os.path.join("./data/ia/fm_item_questions.csv")
 
     # the folder structure of the IA raw and clipped dirs mirrors that of the raw video dir
     IA_VIDEO_DIR = os.path.join(DATA_DIR, "VideoDataDerived/FMVideoClips/")
     IA_RAW_VIDEO_DIR = os.path.join(IA_VIDEO_DIR, "rawVideos/")
     IA_CLIPPED_VIDEO_DIR = os.path.join(IA_VIDEO_DIR, "clippedVideos/")
-
-
-def load_strokerehab_primitives_dataset(
-        patients='all', activity='all', reps='all',
-        filter_for_testset=False, filter_for_subsampled_testset=False,
-        video_regex=None):
-    """
-    Loads the StrokeRehab dataset from a cleaned metadata file and applies AND-ed filters.
-
-    Args:
-        patients (str): The patient IDs to include in the dataset. Default is 'all'.
-            If specifying individual patients, separate them with commas
-            Example: 'S0001,S0002'
-        activity (str): The activity names to include in the dataset. Default is 'all' (11 total).
-            If specifying individual activities, separate them with commas
-            Example: 'RTT left side,RTT right side,brushing,combing,deodrant,drinking,face wash,feeding,glasses,shelf left side,shelf right side'
-        reps (str): Either 'all' or 'first'.
-        filter_for_testset (bool): If True, include only the VIDEOS in the test set of
-            the original StrokeRehab paper. https://pubmed.ncbi.nlm.nih.gov/37766938/
-            This data is located in './data/fp/strokerehab_test_set.txt' and already
-            incorporated into the CSV metadata file.
-        filter_for_subsampled_testset (bool): If True, include only the VIDEOS in the
-            subsampled test set of the original StrokeRehab paper. 50 videos total. A subset of the
-            original test set, which is ~515 videos.
-        video_regex (str): A regex pattern to filter video paths. If provided, this will override
-            the patient and activity filters. This is useful for loading specific videos based on their paths.
-    
-    Returns:
-        dataset (datasets.Dataset): The StrokeRehab dataset with the specified filters applied.
-    """
-    df = pd.read_csv(DataPaths.FP_METADATA_PATH)
-    if video_regex is not None:
-        df = df[df['path_v'].str.contains(video_regex)]
-    else:
-        if patients != 'all':
-            patients = patients.split(',')
-            df = df[df['patient'].isin(patients)]
-        if activity != 'all':
-            activity = activity.split(',')
-            df = df[df['activity'].isin(activity)]
-        if reps != 'all':
-            if reps != 'first':
-                raise ValueError("Invalid value for reps. Must be 'all' or 'first'.")
-            df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
-        if filter_for_testset:
-            df = df[df['is_in_strokerehab_test_set']]
-        if filter_for_subsampled_testset:
-            df = df[df['subsampled_test_set']]
-    dataset = datasets.Dataset.from_pandas(df)
-    dataset_dict = datasets.DatasetDict({'test': dataset})
-    return dataset_dict
-
-
-def load_strokerehab_ia_dataset(
-    patients: str = 'all',
-    fm_items: str = 'all',
-    reps: str = 'all',
-    video_regex: str = None
-) -> datasets.Dataset:
-    """
-    Loads the StrokeRehab IA (Instrumental Activities) dataset from a cleaned metadata file
-    and applies AND-ed filters on patient IDs, FM items, and repetition—or, if video_regex
-    is set, filters purely by that regex on the path.
-
-    Args:
-        patients: comma-sep list of patient IDs (e.g. "S0001,S0002"), or 'all' for no filter.
-        fm_items: comma-sep list of fm numbers or ranges (e.g. "9,10-12,15"), or 'all' for no filter.
-        reps: 'all' or 'first' — if 'first', keep only the lowest-numbered rep per video pattern.
-        video_regex: a regex string; if provided, only rows where `path_v` matches this regex
-                     will be kept, and all other filters are skipped.
-
-    Returns:
-        A HuggingFace Dataset of the filtered videos.
-    """
-    # --- load metadata ---
-    df = pd.read_csv(DataPaths.IA_METADATA_PATH)  # must have column 'path_v'
-
-    # --- regex override ---
-    if video_regex is not None:
-        df = df[df['path_v'].str.contains(video_regex, regex=True)]
-    
-    else:
-        # --- patient filter ---
-        if patients != 'all':
-            pats = {p.strip() for p in patients.split(',')}
-            df = df[df['path_v'].str.split('/', 1).str[0].isin(pats)]
-
-        # --- fm_items filter ---
-        if fm_items != 'all':
-            # build set of requested fm numbers
-            req = set()
-            for token in fm_items.replace(' ', '').split(','):
-                if '-' in token:
-                    a, b = token.split('-', 1)
-                    req.update(range(int(a), int(b) + 1))
-                else:
-                    req.add(int(token))
-
-            # extract the fm part from each path
-            df['__fm'] = df['path_v'].str.extract(r'_FM(\d+(?:-\d+)?)_')[0]
-
-            def keep_fm(fm_str):
-                if '-' in fm_str:
-                    a, b = map(int, fm_str.split('-', 1))
-                    return bool(req.intersection(range(a, b + 1)))
-                else:
-                    return int(fm_str) in req
-
-            df = df[df['__fm'].apply(keep_fm)]
-            df.drop(columns='__fm', inplace=True)
-
-        # --- reps filter ---
-        if reps != 'all':
-            if reps != 'first':
-                raise ValueError("`reps` must be 'all' or 'first'")
-            # pull out rep number and base path (everything before final underscore)
-            df['__rep'] = df['path_v'].str.extract(r'_(\d{2})\.mp4$')[0].astype(int)
-            df['__base'] = df['path_v'].str.rsplit('_', 1).str[0]
-            # keep the first (lowest) rep per base
-            df = (
-                df.sort_values('__rep')
-                  .groupby('__base', as_index=False)
-                  .first()
-                  .drop(columns=['__rep', '__base'])
-            )
-
-    # --- build and return HF dataset ---
-    return datasets.Dataset.from_pandas(df.reset_index(drop=True))
 
 
 ##################### Metadata Utilities #####################
@@ -355,73 +227,4 @@ def string_to_resps(s: str, drop_duplicated: bool = True) -> tuple[tuple[str, ..
         prims = prims[:-1]
 
     return tuple(prims), tuple(times)
-
-
-def convert_motion_contact_to_primitives(
-    motion_and_contact, times, future_window=2.0
-):
-    """
-    Args:
-        motion_and_contact: list of length n, each either
-            - "Yes <SEP> Yes" strings, or
-            - 2-tuples ("Yes"/"No", "Yes"/"No")
-        times: list or tuple of floats of length n+1; times[i] is the start
-            of segment i, times[i+1] its end.
-        future_window: how many seconds ahead to scan for contact to label 'reach'
-    
-    Returns:
-        primitives: list of str of length n, one of
-            ["reach","reposition","transport","stabilize","idle"]
-        times: the exact same list/tuple you passed in (length n+1)
-    """
-    n = len(motion_and_contact)
-    assert len(times) == n + 1, "times must be one longer than motion_and_contact"
-
-    # parse Yes/No into booleans
-    motion_flags = []
-    contact_flags = []
-    for mc in motion_and_contact:
-        if isinstance(mc, str):
-            mot_str, con_str = mc.split("<SEP>")
-            motion = "yes" in mot_str.strip().lower()
-            contact = "yes" in con_str.strip().lower()
-        else:
-            motion = ("yes" in mc[0].strip().lower())
-            contact = ("yes" in mc[1].strip().lower())
-        motion_flags.append(motion)
-        contact_flags.append(contact)
-
-    primitives = []
-    start_times = times[:-1]  # length n
-
-    for i in range(n):
-        t0 = start_times[i]
-        m = motion_flags[i]
-        c = contact_flags[i]
-
-        if m and not c:
-            # scan ahead up to future_window
-            reach = False
-            j = i + 1
-            while j < n and (start_times[j] - t0) <= future_window:
-                if contact_flags[j]:
-                    reach = True
-                    break
-                j += 1
-            prim = "reach" if reach else "reposition"
-
-        elif m and c:
-            prim = "transport"
-
-        elif not m and c:
-            prim = "stabilize"
-
-        else:  # not m and not c
-            prim = "idle"
-
-        primitives.append(prim)
-
-    # return the new primitives list, and the original times unchanged
-    return primitives, times
-
 
