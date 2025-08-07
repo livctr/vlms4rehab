@@ -367,31 +367,32 @@ class LlavaVid(lmms):
             built_contexts = [build_context(context) for context in context_with_multiple_questions_list]
 
             outputs = []
-            # import pdb ; pdb.set_trace()
             for video, start_time_s, end_time_s in videos:
-                import time
-                start = time.time()
-                video = build_video(video)
                 window_outputs = []
 
-                # Force prefill KV cache
-                prefix_len, suffix_lens = longest_common_prefix_len([bc[0] for bc in built_contexts])
-                prefix_cache = DynamicCache()
+                video = build_video(video)
 
-                with torch.no_grad():
-                    prefix_cache = self.model(
-                        input_ids=built_contexts[0][0][:, :prefix_len],
-                        images=[video],
-                        past_key_values=prefix_cache,
-                        use_cache=True,
-                        modalities="video"
-                    ).past_key_values
+                # Force prefill KV cache
+                if len(built_contexts) == 1:
+                    prefix_cache = None
+                else:
+                    prefix_len, suffix_lens = longest_common_prefix_len([bc[0] for bc in built_contexts])
+                    prefix_cache = DynamicCache()
+
+                    with torch.inference_mode():
+                        prefix_cache = self.model(
+                            input_ids=built_contexts[0][0][:, :prefix_len],
+                            images=[video],
+                            past_key_values=prefix_cache,
+                            use_cache=True,
+                            modalities="video"
+                        ).past_key_values
 
                 for i, (input_ids, attention_masks, stopping_criteria, cur_prompt) in enumerate(built_contexts):
                     with torch.inference_mode():
                         if self.use_cache and i > 0:
                             prefix_cache.crop(-suffix_lens[i-1]-len(output_ids[0]))
-                        # past_kv = copy.deepcopy(prefix_cache)
+
                         output_ids = self.model.generate(
                             inputs=input_ids,
                             images=[video],
@@ -412,8 +413,6 @@ class LlavaVid(lmms):
                 torch.cuda.empty_cache()
                 window_outputs = " <SEP> ".join(window_outputs)
                 outputs.append((window_outputs, start_time_s, end_time_s))
-                end = time.time()
-                eval_logger.warning(f"One video costs {end - start} seconds")
 
             eval_logger.debug(f"Question: {cur_prompt}")
             outputs_print = "\n".join([f"{out[0]} (start: {out[1]}, end: {out[2]})" for out in outputs])

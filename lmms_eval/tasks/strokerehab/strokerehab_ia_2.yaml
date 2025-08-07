@@ -1,7 +1,7 @@
 # Load StrokeRehab dataset from local
 dataset_kwargs:
-  use_dataset_builder: !function utils_impairment_analysis.load_sria_1
-task: "strokerehab_ia_1"
+  use_dataset_builder: !function utils_impairment_analysis.load_sria_2
+task: "strokerehab_ia_2"
 test_split: test
 output_type: generate_until
 doc_to_visual: !function utils_impairment_analysis.sr_ia_doc_to_visual

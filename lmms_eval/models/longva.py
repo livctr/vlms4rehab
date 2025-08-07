@@ -4,6 +4,8 @@ import torch
 from accelerate import Accelerator, DistributedType, InitProcessGroupKwargs
 from accelerate.state import AcceleratorState
 from transformers import AutoConfig
+from transformers.cache_utils import DynamicCache
+
 
 torch.backends.cuda.matmul.allow_tf32 = True
 
@@ -28,6 +30,7 @@ from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 from lmms_eval.models.model_utils.load_video import read_video_pyav, load_long_video_decord
+from lmms_eval.models.model_utils.caching import longest_common_prefix_len
 
 try:
     from longva.constants import (
@@ -540,10 +543,11 @@ class LongVA(lmms):
             
             outputs = []
             for video, start_time_s, end_time_s in videos:
+                video_window_output = []
+
                 image_tensor = build_video(video)
                 built_contexts = [build_input_ids(context, image_tensor, gen_kwargs) for context in context_with_multiple_questions_list]
                 
-                video_window_output = []
                 with torch.inference_mode():
                     for input_ids, attention_masks, pad_token_ids, gen_kwargs_copy in built_contexts:
                         single_output = self.model.generate(

@@ -54,79 +54,71 @@ from data.utils_strokerehab import DataPaths
 
 
 def extract_answers(
-    output_log_path: str | Path,
+    output_log_path: str | Path | list[str | Path] | tuple[str | Path],
     questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH,
 ) -> pd.DataFrame:
     """
-    Parse a JSON-lines log and return **one row per (patient, QID)**, ensuring
-    the cartesian product “all patients × all questions” is present. Missing
-    answers are represented with Pandas `<NA>`.
-
-    Returns
-    -------
-    DataFrame with columns
-        patient | qid | answer | fm_item
+    Accept one log path **or an iterable** of log paths.  If multiple logs
+    contain the same (patient, qid) pair, raise ValueError.
     """
-    # ------------------------------------------------------------------ #
-    # 1)  Question metadata
-    # ------------------------------------------------------------------ #
+    paths = (
+        [output_log_path]
+        if isinstance(output_log_path, (str, Path))
+        else list(output_log_path)
+    )
+    # ---------- Question metadata (unchanged) ----------
     qmeta = pd.read_csv(questions_csv_path, usecols=["qid", "fm_video"])
     qids = qmeta["qid"]
     qid2fm = {row.qid: int(row.fm_video.split("_")[0]) for row in qmeta.itertuples()}
 
     rows: list[dict[str, Any]] = []
+    seen_pairs: set[tuple[str, int]] = set()
 
-    # ------------------------------------------------------------------ #
-    # 2)  Read the JSONL log
-    # ------------------------------------------------------------------ #
-    with Path(output_log_path).open(encoding="utf-8") as fh:
-        for line in fh:
-            rec = json.loads(line)
+    # ---------- Read every JSONL log ----------
+    for p in paths:
+        with Path(p).open(encoding="utf-8") as fh:
+            for line in fh:
+                rec = json.loads(line)
 
-            patient = rec["doc"]["patient"]
-            qids_in_line = [int(x) for x in rec["qids"].split("<SEP>")]
+                patient = rec["doc"]["patient"]
+                qids_in_line = [int(x) for x in rec["qids"].split("<SEP>")]
 
-            joined: str = rec["filtered_resps"]
-            if isinstance(joined, list):
-                joined = "<SEP>".join(joined)
+                joined: str = rec["filtered_resps"]
+                if isinstance(joined, list):
+                    joined = "<SEP>".join(joined)
+                answers = [
+                    part.split("<TIME")[0].strip() for part in joined.split("<SEP>")
+                ]
 
-            answers = [
-                part.split("<TIME")[0].strip() for part in joined.split("<SEP>")
-            ]
+                if len(qids_in_line) != len(answers):
+                    raise ValueError("Mismatch between qids and answers in log line")
 
-            if len(qids_in_line) != len(answers):
-                raise ValueError("Mismatch between qids and answers in log line")
+                for qid, ans in zip(qids_in_line, answers, strict=True):
+                    key = (patient, qid)
+                    if key in seen_pairs:
+                        raise ValueError(
+                            f"Duplicate answer for patient={patient!r}, qid={qid}"
+                        )
+                    seen_pairs.add(key)
+                    rows.append(
+                        {
+                            "patient": patient,
+                            "qid": qid,
+                            "answer": ans,
+                            "fm_item": qid2fm[qid],
+                        }
+                    )
 
-            for qid, ans in zip(qids_in_line, answers, strict=True):
-                rows.append(
-                    {
-                        "patient": patient,
-                        "qid": qid,
-                        "answer": ans,
-                        "fm_item": qid2fm[qid],
-                    }
-                )
-
+    # ---------- Rest of the function unchanged ----------
     df = pd.DataFrame(rows)
-
-    # ------------------------------------------------------------------ #
-    # 3)  Add missing (patient, qid) pairs  → answer <NA>
-    # ------------------------------------------------------------------ #
     if df.empty:
         return pd.DataFrame(columns=["patient", "qid", "answer", "fm_item"])
 
     patients = df["patient"].unique()
     full_idx = pd.MultiIndex.from_product([patients, qids], names=["patient", "qid"])
-
-    df = (
-        df.set_index(["patient", "qid"])
-        .reindex(full_idx)
-        .reset_index()
-    )
-
+    df = df.set_index(["patient", "qid"]).reindex(full_idx).reset_index()
     df["fm_item"] = df["fm_item"].fillna(df["qid"].map(qid2fm)).astype(int)
-    df["answer"] = df["answer"].astype("string")  # nullable StringDtype
-
+    df["answer"] = df["answer"].astype("string")
     return df
 
 
@@ -348,13 +340,13 @@ def aggregate_fm_metrics(
 
 
 # Example
-# if __name__ == "__main__":
-#     log_path = "logs/strokerehab_ia_1/bot_8f/20250807_055937_samples_strokerehab_ia_1.jsonl"
-#     ans_df = extract_answers(log_path)
-#     print(f"Extracted {len(ans_df)} answers.")
-#     print(ans_df.head())
-#     score_df = compute_fm_scores(output_log_path=log_path)
-#     print(f"Computed scores for {len(score_df)} (patient, item) pairs.")
-#     print(score_df.head())
-#     metrics = aggregate_fm_metrics(score_df)
-#     print("Metrics:", metrics)
+if __name__ == "__main__":
+    log_path = "logs/strokerehab_ia_1/bot_8f/20250807_055937_samples_strokerehab_ia_1.jsonl"
+    ans_df = extract_answers(log_path)
+    print(f"Extracted {len(ans_df)} answers.")
+    print(ans_df.head())
+    score_df = compute_fm_scores(output_log_path=log_path)
+    print(f"Computed scores for {len(score_df)} (patient, item) pairs.")
+    print(score_df.head())
+    metrics = aggregate_fm_metrics(score_df)
+    print("Metrics:", metrics)
