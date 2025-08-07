@@ -11,6 +11,7 @@ data_collection_auto.sbatch
 test_images/
 test_images_out/
 test_videos_out/
+plots/
 
 .vscode
 
