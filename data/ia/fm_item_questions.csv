@@ -98,3 +98,5 @@ qid,fm_video,question_type,sampling,binary_no_score,binary_yes_score,question
 96,32_I,rate,dense,,,"Assess the patient's dysmetria (error in endpoint, misses the endpoint). Rate as follows: 0 (pronounced and random dysmetria), 1 (slight and systematic dysmetria), or 2 (no dysmetria OR unable to move). Answer directly."
 97,33_I,count,dense,,,"How many times did the patient touch their knee? Output just the number directly."
 98,33_I,count,dense,,,"How many times did the patient touch their nose? Output just the number directly."
+99,33_O,count,dense,,,"How many times did the patient touch their knee? Output just the number directly."
+100,33_O,count,dense,,,"How many times did the patient touch their nose? Output just the number directly."

@@ -41,7 +41,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Set
+from typing import Any, Iterable, Set
 
 import numpy as np
 import pandas as pd
@@ -53,28 +53,94 @@ from data.utils_strokerehab import DataPaths
 # --------------------------------------------------------------------------- #
 
 
+
+def _parse_resp_block(block: str) -> tuple[list[str], float | None]:
+    """
+    Split a single “<RESP> … <TIME> start-end” block into the list of answers
+    *without* trailing whitespace/TIME and return the end-time (float) if present.
+    """
+    time_match = re.search(r"<TIME>\s*([\d.]+)-([\d.]+)", block)
+    end_time = float(time_match.group(2)) if time_match else None
+    answers_part = block.split("<TIME>")[0]  # drop the time segment entirely
+    answers = [a.strip() for a in answers_part.split("<SEP>")]
+    return answers, end_time
+
+
+def _aggregate_answers(
+    qid: int,
+    raw_answers: list[str],
+    end_times: list[float | None],
+    qtype: str | None,
+) -> str:
+    """
+    Reduce the list of answers for one qid into a single string according to the rules.
+    """
+    # Special handling for the “count-until” questions --------------------------
+    if qid == 97:  # knee touches ⇒ stop at cumulative 4
+        threshold = 4
+    elif qid == 98:  # nose touches ⇒ stop at cumulative 5
+        threshold = 5
+    else:
+        threshold = None
+
+    if threshold is not None:
+        cum = 0
+        for ans, t in zip(raw_answers, end_times):
+            try:
+                cum += int(float(ans))  # tolerate “2.0”, etc.
+            except ValueError:
+                continue
+            if cum >= threshold:
+                # “best guess”: end of the segment where the target count is reached
+                return f"{t:.3f}" if t is not None else "N/A"
+        return "N/A"
+
+    # --------------------------------------------------------------------------
+    # Generic aggregations driven by question_type
+    #
+    if qtype == "rate":
+        nums = [float(a) for a in raw_answers if re.fullmatch(r"-?\d+(\.\d+)?", a)]
+        if nums:
+            return str(int(round(np.mean(nums))))
+        return "N/A"
+
+    if qtype == "binary":
+        # normalise to lower-case “yes” / “no”
+        normed = [a.strip().lower() for a in raw_answers if a.strip()]
+        if normed:
+            return Counter(normed).most_common(1)[0][0]
+        return "N/A"
+
+    # Fallback for anything else
+    return raw_answers[-1] if raw_answers else "N/A"
+
+
 def extract_answers(
-    output_log_path: str | Path | list[str | Path] | tuple[str | Path],
+    output_log_path: str | Path | Iterable[str | Path],
     questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH,
 ) -> pd.DataFrame:
     """
-    Accept one log path **or an iterable** of log paths.  If multiple logs
-    contain the same (patient, qid) pair, raise ValueError.
+    Accept one log path **or an iterable** of log paths.  Handles multi-<RESP>
+    logs, aggregates per the spec, and guarantees a complete patient×QID grid.
     """
     paths = (
         [output_log_path]
         if isinstance(output_log_path, (str, Path))
         else list(output_log_path)
     )
-    # ---------- Question metadata (unchanged) ----------
-    qmeta = pd.read_csv(questions_csv_path, usecols=["qid", "fm_video"])
-    qids = qmeta["qid"]
+
+    # ---------- Question metadata ---------- #
+    qmeta = pd.read_csv(
+        questions_csv_path, usecols=["qid", "fm_video", "question_type"]
+    )
     qid2fm = {row.qid: int(row.fm_video.split("_")[0]) for row in qmeta.itertuples()}
+    qid2qtype = {row.qid: row.question_type for row in qmeta.itertuples()}
+    universe_qids = qmeta["qid"]
 
     rows: list[dict[str, Any]] = []
     seen_pairs: set[tuple[str, int]] = set()
 
-    # ---------- Read every JSONL log ----------
+    # ---------- Read every JSONL log ---------- #
     for p in paths:
         with Path(p).open(encoding="utf-8") as fh:
             for line in fh:
@@ -82,40 +148,65 @@ def extract_answers(
 
                 patient = rec["doc"]["patient"]
                 qids_in_line = [int(x) for x in rec["qids"].split("<SEP>")]
+                n_q = len(qids_in_line)
 
+                # The new format may be a list or a str
                 joined: str = rec["filtered_resps"]
                 if isinstance(joined, list):
                     joined = "<SEP>".join(joined)
-                answers = [
-                    part.split("<TIME")[0].strip() for part in joined.split("<SEP>")
-                ]
 
-                if len(qids_in_line) != len(answers):
-                    raise ValueError("Mismatch between qids and answers in log line")
+                # ------------------------------------------------------------------
+                # Split into individual <RESP> blocks, in chronological order
+                # ------------------------------------------------------------------
+                blocks = [b.strip() for b in joined.split("<RESP>") if b.strip()]
 
-                for qid, ans in zip(qids_in_line, answers, strict=True):
+                # Collect answers + end-times per question index
+                answers_per_idx: list[list[str]] = [[] for _ in range(n_q)]
+                end_times = []  # one per block (used only by qid 97 / 98)
+
+                for blk in blocks:
+                    ans_list, t_end = _parse_resp_block(blk)
+                    if len(ans_list) != n_q:
+                        raise ValueError(
+                            f"Mismatch: {len(ans_list)=} vs {n_q=} in line:\n{blk[:120]}..."
+                        )
+                    for i, ans in enumerate(ans_list):
+                        answers_per_idx[i].append(ans)
+                    end_times.append(t_end)
+
+                # ------------------------------------------------------------------
+                # Aggregate answers question-wise
+                # ------------------------------------------------------------------
+                for idx, qid in enumerate(qids_in_line):
                     key = (patient, qid)
                     if key in seen_pairs:
                         raise ValueError(
                             f"Duplicate answer for patient={patient!r}, qid={qid}"
                         )
                     seen_pairs.add(key)
+
+                    agg_ans = _aggregate_answers(
+                        qid,
+                        answers_per_idx[idx],
+                        end_times,
+                        qid2qtype.get(qid),
+                    )
                     rows.append(
-                        {
-                            "patient": patient,
-                            "qid": qid,
-                            "answer": ans,
-                            "fm_item": qid2fm[qid],
-                        }
+                        dict(
+                            patient=patient,
+                            qid=qid,
+                            answer=agg_ans,
+                            fm_item=qid2fm[qid],
+                        )
                     )
 
-    # ---------- Rest of the function unchanged ----------
+    # ---------- Assemble patient × QID grid ---------- #
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame(columns=["patient", "qid", "answer", "fm_item"])
 
     patients = df["patient"].unique()
-    full_idx = pd.MultiIndex.from_product([patients, qids], names=["patient", "qid"])
+    full_idx = pd.MultiIndex.from_product([patients, universe_qids], names=["patient", "qid"])
     df = df.set_index(["patient", "qid"]).reindex(full_idx).reset_index()
     df["fm_item"] = df["fm_item"].fillna(df["qid"].map(qid2fm)).astype(int)
     df["answer"] = df["answer"].astype("string")
@@ -341,12 +432,14 @@ def aggregate_fm_metrics(
 
 # Example
 if __name__ == "__main__":
-    log_path = "logs/strokerehab_ia_1/bot_8f/20250807_055937_samples_strokerehab_ia_1.jsonl"
-    ans_df = extract_answers(log_path)
-    print(f"Extracted {len(ans_df)} answers.")
-    print(ans_df.head())
-    score_df = compute_fm_scores(output_log_path=log_path)
-    print(f"Computed scores for {len(score_df)} (patient, item) pairs.")
-    print(score_df.head())
-    metrics = aggregate_fm_metrics(score_df)
-    print("Metrics:", metrics)
+    # log_path_1 = "logs/strokerehab_ia_1/bot_8f/20250808_035258_samples_strokerehab_ia_1.jsonl"
+    log_path_2 = "logs/strokerehab_ia_2/bot_8f/20250808_035316_samples_strokerehab_ia_2.jsonl"
+    ans_df = extract_answers([log_path_2])
+    print(ans_df)
+    # print(f"Extracted {len(ans_df)} answers.")
+    # print(ans_df.head())
+    # score_df = compute_fm_scores(output_log_path=)
+    # print(f"Computed scores for {len(score_df)} (patient, item) pairs.")
+    # print(score_df.head())
+    # metrics = aggregate_fm_metrics(score_df)
+    # print("Metrics:", metrics)

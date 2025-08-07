@@ -215,11 +215,15 @@ def write_ia_video_metadata():
         for fm in range(fm_low, fm_high + 1):
             # First break down by what the video attempts to show
             if side_shown == 'L':  # the video shows 'L'
-                if f"{fm}_I" in fm_videos_with_questions and side_affected == 'Left':
+                if \
+                    (f"{fm}_I" in fm_videos_with_questions and side_affected == 'Left') or \
+                    (f"{fm}_O" in fm_videos_with_questions and side_affected == 'Right'):
                     seen = True
                     break
             elif side_shown == 'R':  # the video shows 'R'
-                if f"{fm}_I" in fm_videos_with_questions and side_affected == 'Right':
+                if \
+                    (f"{fm}_I" in fm_videos_with_questions and side_affected == 'Right') or \
+                    (f"{fm}_O" in fm_videos_with_questions and side_affected == 'Left'):
                     seen = True
                     break
             elif 'LR' in side_shown:

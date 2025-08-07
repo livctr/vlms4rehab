@@ -193,7 +193,7 @@ class Bot(lmms):
                 video_window_outputs = []
 
                 for context in context_with_multiple_questions_list:
-                    if "2" in context:
+                    if "2" in context or "tremor" in context or "dysmetria" in context or "many times" in context:
                         sim_response = "2"
                     else:
                         sim_response = "No"
