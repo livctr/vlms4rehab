@@ -228,6 +228,5 @@ def load_strokerehab_ia_dataset(
     dataset_dict = datasets.DatasetDict({'test': dataset})
     return dataset_dict
 
-
-strokerehab_load_ia_dataset_S0001_first = partial(load_strokerehab_ia_dataset, patients='S0001', fm_items='all', reps='first')
-strokerehab_load_ia_dataset_S0001 = partial(load_strokerehab_ia_dataset, patients='S0001', fm_items='all', reps='all')
+load_sria_1 = partial(load_strokerehab_ia_dataset, patients='S0001', fm_items='3-17,19-30', reps='first')
+load_sria_2 = partial(load_strokerehab_ia_dataset, patients='S0001', fm_items='31-33', reps='first')

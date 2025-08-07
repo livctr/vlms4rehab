@@ -13,12 +13,15 @@ from decord import VideoReader, cpu
 from packaging import version
 from tqdm import tqdm
 from transformers import AutoConfig
+from transformers.cache_utils import DynamicCache
 
 from lmms_eval import utils
 from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 from lmms_eval.models.model_utils.load_video import load_long_video_decord
+from lmms_eval.models.model_utils.caching import longest_common_prefix_len
+
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
@@ -417,19 +420,37 @@ class Llava_OneVision(lmms):
 
             outputs = []
             for video, start_time_s, end_time_s in videos:
-                image_tensor = build_video(video)
-
                 video_window_outputs = []
-                for context in context_with_multiple_questions_list:
-                    input_ids, attention_masks, pad_token_ids, gen_kwargs_copy = build_input_ids(context, image_tensor, gen_kwargs)
-                    try:
-                        with torch.inference_mode():
-                            cont = self.model.generate(input_ids, attention_mask=attention_masks, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs_copy)
-                            # cont = self.model.generate(qwen_input_ids, pad_token_id=pad_token_ids, images=image_tensor, use_cache=self.use_cache, **gen_kwargs)
-                        text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
-                        video_window_outputs.append(text_outputs)
-                    except Exception as e:
-                        raise e
+
+                image_tensor = build_video(video)
+                built_contexts = [build_input_ids(context, image_tensor, gen_kwargs) for context in context_with_multiple_questions_list]
+
+                if len(built_contexts) == 1:
+                    prefix_cache = None
+                else:
+                    _, suffix_lens = longest_common_prefix_len([bc[0] for bc in built_contexts])
+                    prefix_cache = DynamicCache()
+                
+                for i, (input_ids, attention_masks, pad_token_ids, gen_kwargs_copy) in enumerate(built_contexts):
+                    with torch.inference_mode():
+                        cont = self.model.generate(
+                            input_ids,
+                            attention_mask=attention_masks,
+                            pad_token_id=pad_token_ids,
+                            images=image_tensor,
+                            use_cache=self.use_cache,
+                            past_key_values=prefix_cache,
+                            **gen_kwargs_copy
+                        )
+
+                        if self.use_cache and len(built_contexts) > 1 and i < len(built_contexts) - 1:
+                            prefix_cache.crop(-suffix_lens[i] - len(cont[0]))
+
+                    text_outputs = self.tokenizer.batch_decode(cont, skip_special_tokens=True)[0].strip()
+                    video_window_outputs.append(text_outputs)
+                
+                del prefix_cache
+                torch.cuda.empty_cache()
 
                 # Join the outputs for this video window
                 video_window_outputs = " <SEP> ".join(video_window_outputs)
@@ -439,7 +460,7 @@ class Llava_OneVision(lmms):
             outputs_print = "\n".join([o[0] for o in outputs])
             eval_logger.debug(f"Prediction: {outputs_print}")
             res.append(outputs)
-            self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)
+            # self.cache_hook.add_partial("generate_until", (context, gen_kwargs), outputs)
             pbar.update(1)
         # reorder this group of results back to original unsorted form
         res = re_ords.get_original(res)

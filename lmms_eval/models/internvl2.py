@@ -9,12 +9,16 @@ from PIL import Image
 from torchvision.transforms.functional import InterpolationMode
 from tqdm import tqdm
 from transformers import AutoModel, AutoTokenizer
+from transformers.cache_utils import DynamicCache
+
 
 from lmms_eval.api.instance import Instance
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 
 from lmms_eval.models.model_utils.load_video import load_long_video_decord
+from lmms_eval.models.model_utils.caching import longest_common_prefix_len
+
 
 from loguru import logger as eval_logger
 

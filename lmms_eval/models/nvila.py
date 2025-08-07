@@ -11,10 +11,15 @@ from llava.constants import MEDIA_TOKENS
 from llava.mm_utils import process_images
 from llava.utils.tokenizer import tokenize_conversation
 
+from transformers.cache_utils import DynamicCache
+
+
 from lmms_eval.api.model import lmms
 from lmms_eval.api.registry import register_model
 from lmms_eval.api.instance import Instance
 from lmms_eval.models.model_utils.load_video import load_long_video_decord
+from lmms_eval.models.model_utils.caching import longest_common_prefix_len
+
 
 
 @register_model("nvila")
@@ -145,10 +150,11 @@ class NVILA(lmms):
 
             outputs = []
             for video, start_time_s, end_time_s in videos:
+                video_window_output = []
+
                 images = [Image.fromarray(frame) for frame in video]
 
-                video_window_output = []
-                for context in context_with_multiple_questions_list:
+                for i, context in enumerate(context_with_multiple_questions_list):
                     media = {'video': [images]}
                     conversation = [{"from": "human", "value": MEDIA_TOKENS['video'] + context}]
                     media['video'] = [process_images(images,
