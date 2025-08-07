@@ -51,7 +51,7 @@ def _get_video_questions():
         row.pop("fm_video")
 
         fm_item = int(fm_video.split('_')[0])
-        fm_type = fm_video.split('_')[1]  # C or I
+        fm_type = fm_video.split('_')[1]  # C, I, or O (concatenated, individual, or other)
         fm_low = FM_ITEM_TO_FM_RANGE[fm_item][0]
         fm_high = FM_ITEM_TO_FM_RANGE[fm_item][1]
 
@@ -77,7 +77,8 @@ def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None, return_ids=False):
         IA_VIDEO_QUESTIONS = _get_video_questions()
     
     if doc["side_shown"] in ["L", "R"]:
-        fm_type = "I"  # individual
+        viewing_affected_side = (doc["side_affected"] == "Left") == (doc["side_shown"] == "L")
+        fm_type = "I" if viewing_affected_side else "O"  # individual or other
     else:
         fm_type = "C"  # concatenated
 
@@ -156,12 +157,15 @@ class OutputToResultsFilter:
                                      contains the string we need to process.
             docs: Additional document/context information (unused here).
         """
+        # import pdb ; pdb.set_trace()
         resps_filtered = []
         for i in range(len(resps)):
-            payload = resps[i][0][0]
-            response, start_time, end_time = payload
-            string = f"{response} <TIME> {start_time:.3f} - {end_time:.3f}"
-            resps_filtered.append(string)
+            resp_filtered = ""
+            for j in range(len(resps[i][0])):
+                payload = resps[i][0][j]
+                response, start_time, end_time = payload
+                resp_filtered += f"<RESP> {response} <TIME> {start_time:.3f}-{end_time:.3f} "
+            resps_filtered.append(resp_filtered)
         return resps_filtered
 
 
