@@ -45,7 +45,7 @@ def get_all_video_files(video_path_regex=None):
         for file in files:
             full_path = os.path.join(root, file)
             
-            if file.endswith(('.mp4', '.avi', '.mov')) and "_FM" in file:
+            if file.endswith(('.mp4', '.avi', '.mov', '.mkv')) and "_FM" in file:
                 if video_path_regex is None or re.search(video_path_regex, full_path):
                     video_files.append(full_path)
     return sorted(video_files)
@@ -57,8 +57,10 @@ if __name__ == "__main__":
     patient_ids = [pid.strip() for pid in patient_ids]
 
     patient_pattern = r"({})[\\/]" .format("|".join(patient_ids))
+    # print(patient_pattern)
 
     video_files = get_all_video_files(video_path_regex=patient_pattern)
+    # print([vf for vf in video_files if "29" in vf])
 
     for video_file in video_files:
         print(f"Processing video file: {video_file}")

@@ -60,7 +60,7 @@ def _get_video_questions():
     return video_questions
 
 
-def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None):
+def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None, return_ids=False):
 
     # path_v: video path
     # patient: patient ID, e.g. S0001
@@ -83,6 +83,7 @@ def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
     questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], fm_type)]
     questions = [q["question"] for q in questions_with_meta]
+    ids = [str(q["qid"]) for q in questions_with_meta]
 
     # side_affected: replace "left video" and "right video" with the correct video
     # Originally, the video for the "left" hand is either on the left or top of the screen.
@@ -126,7 +127,10 @@ def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None):
         raise ValueError(f"Invalid side_shown: {doc['side_shown']}")
 
     sep = " <SEP> "  # keeps track of which questions are being asked
-    return sep.join(questions)
+    if return_ids:
+        return sep.join(questions), sep.join(ids)
+    else:
+        return sep.join(questions)
 
 
 def sr_ia_doc_to_target(doc):
@@ -135,9 +139,8 @@ def sr_ia_doc_to_target(doc):
 
 def sr_ia_process_results(doc, results):
     """Process per-document results into metric format"""
-    # Extract the score from the results
-    import pdb ; pdb.set_trace()  # Do stuff
-    return {}
+    _, ids = sr_ia_doc_to_text(doc, return_ids=True)  # For knowing which questions were asked
+    return {"qids": ids}
 
 
 class OutputToResultsFilter:
