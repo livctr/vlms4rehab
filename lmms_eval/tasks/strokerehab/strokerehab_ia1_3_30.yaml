@@ -1,0 +1,25 @@
+# Reads from ia_video_metadata1.csv and fm_item_questions1.csv
+# These questions are designed for inputting the Lateralities simultaneously (use human-selected camera angles)
+
+# Load StrokeRehab dataset from local
+dataset_kwargs:
+  use_dataset_builder: !function utils_impairment_analysis.load_sria1_3_30
+task: "strokerehab_ia1_3_30"
+test_split: test
+output_type: generate_until
+doc_to_visual: !function utils_impairment_analysis.sr_ia_doc_to_visual
+doc_to_text: !function utils_impairment_analysis.sr_ia_doc_to_text1
+doc_to_target: !function utils_impairment_analysis.sr_ia_doc_to_target
+generation_kwargs:
+  max_new_tokens: 16  # Can be increase
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: false
+process_results: !function utils_impairment_analysis.sr_ia_process_results1
+filter_list:
+  - name: "combine-and-parse"
+    filter:
+      - function: !function utils_impairment_analysis.OutputToResultsFilter
+metadata:
+  version: 1.0

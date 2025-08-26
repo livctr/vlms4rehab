@@ -5,19 +5,10 @@ import os
 import re
 import numpy as np
 
-from Levenshtein import distance as levenshtein_distance
-from loguru import logger as eval_logger
-
 import datasets
 import pandas as pd
 
-from data.utils_strokerehab import (
-    DataPaths, PrimitiveLabelUtils, resps_to_string, string_to_resps,
-    HEALTHY_PATIENTS,
-    MILD_PATIENTS,
-    MODERATE_PATIENTS,
-    SEVERE_PATIENTS,
-)
+from data.utils_strokerehab import DataPaths
 
 
 IA_VIDEO_QUESTIONS = None
@@ -26,13 +17,13 @@ def sr_ia_doc_to_visual(doc, lmms_eval_specific_kwargs=None):
     return [os.path.join(DataPaths.IA_CLIPPED_VIDEO_DIR, doc["path_v"])]
 
 
-def _get_video_questions():
+def _get_video_questions(questions_path):
     """
     Load the questions DataFrame from the IA questions CSV file.
     Returns:
         pd.DataFrame: DataFrame with columns ['fm_video', 'question', 'answer']
     """
-    questions_df = pd.read_csv(DataPaths.IA_QUESTIONS_PATH)
+    questions_df = pd.read_csv(questions_path)
 
     FM_ITEM_TO_FM_RANGE = {
         3: (3, 8), 4: (3, 8), 5: (3, 8), 6: (3, 8), 7: (3, 8), 8: (3, 8),
@@ -60,7 +51,7 @@ def _get_video_questions():
     return video_questions
 
 
-def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None, return_ids=False):
+def sr_ia_doc_to_text(doc, questions_path, return_ids=False):
 
     # path_v: video path
     # patient: patient ID, e.g. S0001
@@ -74,8 +65,8 @@ def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None, return_ids=False):
     # Get all questions relevant to this video: (fm_low, fm_high, side_shown) -> question
     global IA_VIDEO_QUESTIONS
     if IA_VIDEO_QUESTIONS is None:
-        IA_VIDEO_QUESTIONS = _get_video_questions()
-    
+        IA_VIDEO_QUESTIONS = _get_video_questions(questions_path)
+
     if doc["side_shown"] in ["L", "R"]:
         viewing_affected_side = (doc["side_affected"] == "Left") == (doc["side_shown"] == "L")
         fm_type = "I" if viewing_affected_side else "O"  # individual or other
@@ -107,7 +98,8 @@ def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None, return_ids=False):
                 referred_video_mapping["right video"] = "right video"
             else:
                 raise ValueError(f"Invalid side_shown: {doc['side_shown']}")
-        elif doc["side_affected"] == "Right":
+        # For control patients, take the right side as the "affected" side
+        elif doc["side_affected"] == "Right" or doc["side_affected"] is None:
             if "T" in doc["side_shown"]:
                 referred_video_mapping["left video"] = "bottom video"
                 referred_video_mapping["right video"] = "top video"
@@ -135,12 +127,12 @@ def sr_ia_doc_to_text(doc, lmms_eval_specific_kwargs=None, return_ids=False):
 
 
 def sr_ia_doc_to_target(doc):
-    return ""  # We will evaluate these later
+    return ""  # We will evaluate these later in `postprocess`.
 
 
-def sr_ia_process_results(doc, results):
+def sr_ia_process_results(doc, results, questions_path):
     """Process per-document results into metric format"""
-    _, ids = sr_ia_doc_to_text(doc, return_ids=True)  # For knowing which questions were asked
+    _, ids = sr_ia_doc_to_text(doc, questions_path, return_ids=True)  # For knowing which questions were asked
     return {"qids": ids}
 
 
@@ -157,7 +149,6 @@ class OutputToResultsFilter:
                                      contains the string we need to process.
             docs: Additional document/context information (unused here).
         """
-        # import pdb ; pdb.set_trace()
         resps_filtered = []
         for i in range(len(resps)):
             resp_filtered = ""
@@ -173,7 +164,8 @@ def load_strokerehab_ia_dataset(
     patients: str = 'all',
     fm_items: str = 'all',
     reps: str = 'all',
-    video_regex: str = None
+    video_regex: str = None,
+    metadata_path: str = None
 ) -> datasets.Dataset:
     """
     Loads the StrokeRehab IA dataset from a cleaned metadata CSV (with columns
@@ -182,8 +174,8 @@ def load_strokerehab_ia_dataset(
     is set, filters purely by that regex on path_v.
     """
     # --- load metadata ---
-    df = pd.read_csv(DataPaths.IA_VIDEO_METADATA_PATH)
-    
+    df = pd.read_csv(metadata_path)
+
     # ensure numeric types
     df['fm_low']           = df['fm_low'].astype(int)
     df['fm_high']          = df['fm_high'].astype(int)
@@ -232,5 +224,34 @@ def load_strokerehab_ia_dataset(
     dataset_dict = datasets.DatasetDict({'test': dataset})
     return dataset_dict
 
-load_sria_1 = partial(load_strokerehab_ia_dataset, patients='S0001', fm_items='3-17,19-30', reps='first')
-load_sria_2 = partial(load_strokerehab_ia_dataset, patients='S0001', fm_items='31-33', reps='first')
+
+PATIENTS = 'C00011,S0005,S0001,S00021'
+# PATIENTS = 'C00011,S00021'
+# Method 1: simultaneous feed-in
+# - Load the right videos
+load_sria1_3_30 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30', reps='first',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH1
+)
+load_sria1_31_33 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33', reps='first',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH1
+)
+# - Use the right prompts (and attach the right qids)
+sr_ia_doc_to_text1 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH1)
+sr_ia_process_results1 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH1)
+
+
+# Method 2: individual
+# - Load the right videos
+load_sria2_3_30 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30', reps='first',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2
+)
+load_sria2_31_33 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33', reps='first',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2
+)
+# - Use the right prompts (and attach the right qids)
+sr_ia_doc_to_text2 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH2)
+sr_ia_process_results2 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH2)

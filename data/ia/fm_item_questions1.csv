@@ -17,7 +17,7 @@ qid,fm_video,question_type,sampling,binary_no_score,binary_yes_score,question
 15,13_I,binary,uniform,,1,"After beginning to move, does the patient pronate their forearm? Answer 'Yes' or 'No' directly."
 16,13_C,rate,uniform,,,"Assess the left video's maximal shoulder flexion (0 degrees -> 90 degrees) relative to the right video. Rate as follows: 1 (partial elevation) or 2 (full elevation comparable to the right video). Answer directly."
 17,14_I,binary,uniform,0,,"Is the shoulder neutral at onset? Answer 'Yes' or 'No' directly."
-18,14_I,binary,uniform,0,,"Is the elbow flexed to 90 degrees and tucked in at the side at onset?"
+18,14_I,binary,uniform,0,,"Is the elbow flexed to 90 degrees and tucked in at the side at onset? Answer 'Yes' or 'No' directly."
 19,14_I,binary,uniform,,1,"After beginning to move, does the patient flex their elbow? Answer 'Yes' or 'No' directly."
 20,14_I,binary,uniform,,1,"After beginning to move, does the patient abduct their shoulder? Answer 'Yes' or 'No' directly."
 21,14_C,rate,uniform,,,"Assess the left video's maximal forearm pronation-supination relative to the right video. Rate as follows: 1 (partial movement) or 2 (full range of motion with their wrist comparable to the right video). Answer directly."
