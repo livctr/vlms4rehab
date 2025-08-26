@@ -65,7 +65,7 @@ def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overla
             eval_logger.debug(f"Video has {total_frame_num} frames, less than {max_frames_num}, not sampling")
             frame_idx = np.arange(total_frame_num)
         else:
-            frame_idx = np.linspace(0, total_frame_num, max_frames_num, dtype=int, endpoint=False)
+            frame_idx = np.linspace(0, total_frame_num-1, max_frames_num, dtype=int, endpoint=True)
         yield ret_fn(frame_idx), round(0.0, 3), round(len(vr) / video_fps, 3)
     elif sampling_strategy == "dense":
 
