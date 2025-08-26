@@ -32,6 +32,18 @@ PATIENTS = (
 )
 
 
+###################### Impairment assessment ######################
+FM_ITEM_TO_FM_RANGE = {
+    3: (3, 8), 4: (3, 8), 5: (3, 8), 6: (3, 8), 7: (3, 8), 8: (3, 8),
+    9: (9, 11), 10: (9, 11), 11: (9, 11),
+    12: (12, 12), 13: (13, 13), 14: (14, 14), 15: (15, 15), 16: (16, 16), 17: (17, 17),
+    18: (18, 18), 19: (19, 19), 20: (20, 20), 21: (21, 21), 22: (22, 22), 23: (23, 23),
+    24: (24, 25), 25: (24, 25),
+    26: (26, 26), 27: (27, 27), 28: (28, 28), 29: (29, 29), 30: (30, 30),
+    31: (31, 33), 32: (31, 33), 33: (31, 33),
+}
+
+
 ##################### Path and File Utilities #####################
 class DataPaths:
 
@@ -51,6 +63,7 @@ class DataPaths:
     IA_SCORES_PATH = os.path.join("./data/ia/fm_item_scores.csv")
     IA_QUESTIONS_PATH1 = os.path.join("./data/ia/fm_item_questions1.csv")
     IA_QUESTIONS_PATH2 = os.path.join("./data/ia/fm_item_questions2.csv")
+    VIEWS_PATH = os.path.join("./data/ia/fm_item_views.csv")
 
     # the folder structure of the IA raw and clipped dirs mirrors that of the raw video dir
     IA_VIDEO_DIR = os.path.join(DATA_DIR, "VideoDataDerived/FMVideoClips/")

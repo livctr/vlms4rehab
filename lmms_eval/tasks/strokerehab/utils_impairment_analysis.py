@@ -8,7 +8,7 @@ import numpy as np
 import datasets
 import pandas as pd
 
-from data.utils_strokerehab import DataPaths
+from data.utils_strokerehab import DataPaths, FM_ITEM_TO_FM_RANGE
 
 
 IA_VIDEO_QUESTIONS = None
@@ -25,57 +25,47 @@ def _get_video_questions(questions_path):
     """
     questions_df = pd.read_csv(questions_path)
 
-    FM_ITEM_TO_FM_RANGE = {
-        3: (3, 8), 4: (3, 8), 5: (3, 8), 6: (3, 8), 7: (3, 8), 8: (3, 8),
-        9: (9, 11), 10: (9, 11), 11: (9, 11),
-        12: (12, 12), 13: (13, 13), 14: (14, 14), 15: (15, 15), 16: (16, 16), 17: (17, 17),
-        18: (18, 18), 19: (19, 19), 20: (20, 20), 21: (21, 21), 22: (22, 22), 23: (23, 23),
-        24: (24, 25), 25: (24, 25),
-        26: (26, 26), 27: (27, 27), 28: (28, 28), 29: (29, 29), 30: (30, 30),
-        31: (31, 33), 32: (31, 33), 33: (31, 33),
-    }
-
-    video_questions: Dict[Tuple[int, int, str], List[Dict]] = defaultdict(list)
+    video_questions: Dict[Tuple[int, int, str, str], List[Dict]] = defaultdict(list)
 
     for _, row in questions_df.iterrows():
         fm_video = row["fm_video"]
         row.pop("fm_video")
 
         fm_item = int(fm_video.split('_')[0])
-        fm_type = fm_video.split('_')[1]  # C, I, or O (concatenated, individual, or other)
         fm_low = FM_ITEM_TO_FM_RANGE[fm_item][0]
         fm_high = FM_ITEM_TO_FM_RANGE[fm_item][1]
-
-        video_questions[(fm_low, fm_high, fm_type)].append(row.to_dict())
+        fm_laterality = fm_video.split('_')[1]  # B, A, or H
+        fm_view = fm_video.split('_')[2]  # F or S
+        video_questions[(fm_low, fm_high, fm_laterality, fm_view)].append(row.to_dict())
 
     return video_questions
 
 
 def sr_ia_doc_to_text(doc, questions_path, return_ids=False):
 
+    # path_v,patient,fm_low,fm_high,laterality,video_view,side_affected,is_annotated_view,is_question_view,duration
+
     # path_v: video path
-    # patient: patient ID, e.g. S0001
+    # patient: patient ID
     # fm_low: lowest FM item in this video
     # fm_high: highest FM item in this video
-    # side_shown: L, R, LRT, or LRS
-    # repetition_index: number of the repetition
-    # duration_s: length of the video in seconds
+    # laterality: B, A, or H
+    # video_view: F or S
     # side_affected: Left or Right
+    # affected_video_loc: Top, Center, Left
 
-    # Get all questions relevant to this video: (fm_low, fm_high, side_shown) -> question
+    # Get all questions relevant to this video: (fm_low, fm_high, fm_laterality, fm_view) -> question
     global IA_VIDEO_QUESTIONS
     if IA_VIDEO_QUESTIONS is None:
         IA_VIDEO_QUESTIONS = _get_video_questions(questions_path)
 
-    if doc["side_shown"] in ["L", "R"]:
-        viewing_affected_side = (doc["side_affected"] == "Left") == (doc["side_shown"] == "L")
-        fm_type = "I" if viewing_affected_side else "O"  # individual or other
-    else:
-        fm_type = "C"  # concatenated
-
-    questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], fm_type)]
+    # Get all questions relevant to this video: (fm_low, fm_high, laterality, fm_view) -> question
+    questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], doc["video_view"])]
     questions = [q["question"] for q in questions_with_meta]
     ids = [str(q["qid"]) for q in questions_with_meta]
+
+    # For videos with both lateralities, the affected side is either 
+    # at the top or left of the video.
 
     # side_affected: replace "left video" and "right video" with the correct video
     # Originally, the video for the "left" hand is either on the left or top of the screen.
@@ -83,41 +73,18 @@ def sr_ia_doc_to_text(doc, questions_path, return_ids=False):
     # The questions assume the "left video" is the affected hand.
     # Now we need to change the questions to refer to the affected hand.
 
-    if doc['side_shown'] in ["L", "R"]:
+    if doc['affected_video_loc'] in ["Left", "Center"]:
         pass
 
-    elif doc['side_shown'] in ["LRT", "LRS"]:
-
-        referred_video_mapping = {"left video": "", "right video": ""}
-        if doc["side_affected"] == "Left":
-            if "T" in doc["side_shown"]:
-                referred_video_mapping["left video"] = "top video"
-                referred_video_mapping["right video"] = "bottom video"
-            elif "S" in doc["side_shown"]:
-                referred_video_mapping["left video"] = "left video"
-                referred_video_mapping["right video"] = "right video"
-            else:
-                raise ValueError(f"Invalid side_shown: {doc['side_shown']}")
-        # For control patients, take the right side as the "affected" side
-        elif doc["side_affected"] == "Right" or doc["side_affected"] is None:
-            if "T" in doc["side_shown"]:
-                referred_video_mapping["left video"] = "bottom video"
-                referred_video_mapping["right video"] = "top video"
-            elif "S" in doc["side_shown"]:
-                referred_video_mapping["left video"] = "right video"
-                referred_video_mapping["right video"] = "left video"
-            else:
-                raise ValueError(f"Invalid side_shown: {doc['side_shown']}")
-        else:
-            raise ValueError(f"Invalid side_affected: {doc['side_affected']}")
-
+    elif doc['affected_video_loc'] == "Top":
+        referred_video_mapping = {"left video": "top video", "right video": "bottom video"}
         # Replace in questions
         _pattern = re.compile(r'\b(?:left video|right video)\b')
         for i, q in enumerate(questions):
             questions[i] = _pattern.sub(lambda m: referred_video_mapping[m.group(0)], q)
 
     else:
-        raise ValueError(f"Invalid side_shown: {doc['side_shown']}")
+        raise ValueError("Invalid affected_video_loc")
 
     sep = " <SEP> "  # keeps track of which questions are being asked
     if return_ids:
@@ -163,15 +130,25 @@ class OutputToResultsFilter:
 def load_strokerehab_ia_dataset(
     patients: str = 'all',
     fm_items: str = 'all',
-    reps: str = 'all',
     video_regex: str = None,
-    metadata_path: str = None
+    metadata_path: str = None,
+    filter_by: str = 'question_view'
 ) -> datasets.Dataset:
     """
-    Loads the StrokeRehab IA dataset from a cleaned metadata CSV (with columns
-    path_v, patient, fm_low, fm_high, side_shown, repetition_index, duration_s, side_affected)
-    and applies AND-ed filters on patient IDs, FM items, and repetition—or, if video_regex
-    is set, filters purely by that regex on path_v.
+    Loads the StrokeRehab IA dataset from a cleaned metadata CSV. Applies AND-ed filters on
+    patient IDs, FM items, and repetition—or, if video_regex is set, filters purely by that
+    regex on path_v.
+
+    Arguments:
+    - patients
+    - fm_items
+    - video_regex
+    - metadata_path
+    - filter_by: either 'annotated_view' or 'question_view'.
+    
+    Expected Columns:
+        path_v,patient,fm_low,fm_high,laterality,video_view,side_affected,is_annotated_view,
+        affected_video_loc,is_question_view,duration
     """
     # --- load metadata ---
     df = pd.read_csv(metadata_path)
@@ -179,7 +156,6 @@ def load_strokerehab_ia_dataset(
     # ensure numeric types
     df['fm_low']           = df['fm_low'].astype(int)
     df['fm_high']          = df['fm_high'].astype(int)
-    df['repetition_index'] = df['repetition_index'].astype(int)
 
     # --- regex override ---
     if video_regex is not None:
@@ -208,16 +184,10 @@ def load_strokerehab_ia_dataset(
                 return any(low <= r <= high for r in req)
 
             df = df[df.apply(overlaps, axis=1)]
-
-        # --- reps filter ---
-        if reps != 'all':
-            if reps != 'first':
-                raise ValueError("`reps` must be 'all' or 'first'")
-            # for each (patient, fm_low, fm_high, side_shown), keep only lowest repetition_index
-            grp = ['patient', 'fm_low', 'fm_high', 'side_shown']
-            df['min_rep'] = df.groupby(grp)['repetition_index'].transform('min')
-            df = df[df['repetition_index'] == df['min_rep']]
-            df = df.drop(columns='min_rep')
+    
+    # Filter by view angle
+    col_name = "is_" + filter_by
+    df = df[df[col_name]]
 
     # --- build and return HF dataset ---
     dataset = datasets.Dataset.from_pandas(df.reset_index(drop=True))
