@@ -2,64 +2,38 @@
 postprocess.ia.eval
 ===================
 
-Utilities to:
-  1) Parse model JSONL logs into per-(patient, qid) answers
-  2) Convert those answers into predicted FM scores (and join ground truth)
-  3) Aggregate evaluation metrics (Accuracy, APD, MTSD)
+Evaluation pipeline utilities for StrokeRehab IA logs.
 
-# ---------------------------------------------------------------------------
-# Quick start
-# ---------------------------------------------------------------------------
+This module exposes three utilities for extracting information from a log:
+answers to questions, FM scores computed by the answers programatically, and
+model evaluation scores.
+  • answers_for_model(model, tasks=…, logs_root=…, log_paths=None, drop_parsed=True)
+  • fm_scores_for_model(model, tasks=…, logs_root=…, log_paths=None, …)
+  • metrics_for_model(model, tasks=…, logs_root=…, log_paths=None, …)
+      → Calls _aggregate_fm_metrics under the hood
 
-from postprocess.ia.eval import (
-    extract_answers,
-    compute_fm_scores_from_qids,
-    aggregate_fm_metrics,
-)
-from data.utils_strokerehab import DataPaths
+Multi-model convenience
+-----------------------
+  • metrics_for_models(models="all", tasks=…, logs_root=…, …)
+      → Tidy DataFrame with metrics per model
 
-# 1) Extract raw answers from one or more JSONL logs
-ans_df = extract_answers(
-    [
-        "runs/2025-08-07T12-00-00_eval.jsonl",
-        "runs/2025-08-08T09-10-00_eval.jsonl",
-    ],
-    drop_parsed=True,  # keep only 'answer' (omit human-readable parsed string)
-)
+Export
+------
+  • metrics_df_to_latex(df, caption=None, label=None, float_format="%.2f")
+      → Convert metrics DataFrame to LaTeX table
 
-# ans_df columns: patient | qid | answer
-
-# 2) Compute predicted FM scores and attach ground-truth
-score_df = compute_fm_scores_from_qids(
-    ans_df,
-    questions_csv_path=DataPaths.IA_QUESTIONS_PATH,
-    gt_csv_path=DataPaths.IA_SCORES_PATH,
-)
-
-# score_df columns: patient | fm_item | pred_score | gt_score
-
-# 3) Aggregate metrics on (optionally) a subset of patients and items
-metrics = aggregate_fm_metrics(
-    score_df,
-    questions_csv_path=DataPaths.IA_QUESTIONS_PATH,
-    fm_items="3-8,9-11,12,13,14,15-18,19-33",  # optional
-    patients="S0001,S0002",                     # optional
-)
-print(metrics)  # {'accuracy': ..., 'apd': ..., 'mtsd': ...}
-
-# Notes
-# • The JSONL input is expected to have, per line:
-#   {
-#     "doc": {"patient": "S0001"},
-#     "qids": "0<SEP>1<SEP>2<SEP>…",
-#     "filtered_resps": "<RESP><TIME> 0.00-2.33 ... <SEP> ... <RESP> ..."
-#   }
-# • For QIDs < 95 → we take the raw first answer
-# • QIDs 95,96 → we average numeric answers and round to nearest int
-# • QIDs 97–100 → we compute the time when cumulative count reaches a threshold
-#   (97:4, 98:5, 99:4, 100:5). If never reached → np.inf
+Notes
+-----
+• Input JSONL logs are expected to contain:
+    {
+      "doc": {"patient": "S0001"},
+      "qids": "0<SEP>1<SEP>2<SEP>…",
+      "filtered_resps": "<RESP><TIME> 0.00-2.33 ... <SEP> ..."
+    }
+• QIDs < 95 → raw string answer
+• QIDs 95–96 → rounded average of numeric answers
+• QIDs 97–100 → elapsed time when cumulative count hits threshold
 """
-
 from __future__ import annotations
 
 import json
@@ -172,7 +146,7 @@ def _calc_answer(qid: int, triples: List[Tuple[str, float, float]]) -> object:
 
 # ───────────────────────────── Public API ───────────────────────────── #
 
-def extract_answers(
+def _extract_answers(
     output_log_path: Union[str, Path, Iterable[Union[str, Path]]],
     drop_parsed: bool = True,
 ) -> pd.DataFrame:
@@ -262,9 +236,6 @@ def extract_answers(
     df["qid"] = df["qid"].astype(int)
     return df
 
-
-# ─────────────────────────── Scoring helpers ─────────────────────────── #
-
 def _score_single_row(row: pd.Series) -> Tuple[bool, Optional[int]]:
     """
     Decide whether this *row* yields a usable predicted score and return it.
@@ -295,13 +266,10 @@ def _score_single_row(row: pd.Series) -> Tuple[bool, Optional[int]]:
     m = re.search(r"\b([012])\b", ans)
     return (True, int(m.group(1))) if m else (False, None)
 
-
-# ─────────────────────────── Scoring pipeline ─────────────────────────── #
-
-def compute_fm_scores_from_qids(
+def _compute_fm_scores_from_qids(
     ans_df: pd.DataFrame,
     *,
-    questions_csv_path: Union[str, Path] = DataPaths.IA_QUESTIONS_PATH,
+    questions_csv_path: Union[str, Path] = DataPaths.IA_QUESTIONS_PATH1,
     gt_csv_path: Union[str, Path] = DataPaths.IA_SCORES_PATH,
     side_col: str = "Side of body affected",
     id_col: str = "Subject ID",
@@ -312,7 +280,7 @@ def compute_fm_scores_from_qids(
     Parameters
     ----------
     ans_df
-        Output of `extract_answers` with columns: patient | qid | answer
+        Output of `_extract_answers` with columns: patient | qid | answer
     questions_csv_path
         CSV with columns at least:
           ['qid','fm_video','question_type','binary_no_score','binary_yes_score']
@@ -386,11 +354,20 @@ def compute_fm_scores_from_qids(
     #     If items 15,16,17 all have pred_score == 2, set 18 := 2; else 0.
     to_add: List[dict[str, Any]] = []
     for patient, grp in df.groupby("patient", sort=False):
-        if (grp["fm_item"] == 18).any():
+        present_items = set(grp["fm_item"].unique())
+        # If 18 already present in this log, do nothing.
+        if 18 in present_items:
             continue
-        scores_15_17 = grp.loc[grp["fm_item"].isin([15, 16, 17]), "pred_score"]
-        all_two = (len(scores_15_17) == 3) and ((scores_15_17 == 2).all())
-        to_add.append({"patient": patient, "fm_item": 18, "pred_score": 2 if all_two else 0})
+
+        # Only infer 18 when 15,16,17 are all present for this patient in this log.
+        if {15, 16, 17}.issubset(present_items):
+            scores_15_17 = grp.loc[grp["fm_item"].isin([15, 16, 17]), "pred_score"]
+            # All three must be non-missing to make a decision
+            if scores_15_17.notna().sum() == 3:
+                all_two = (scores_15_17.astype(int) == 2).all()
+                inferred = 2 if all_two else 0
+                to_add.append({"patient": patient, "fm_item": 18, "pred_score": inferred})
+        # else: don’t synthesize FM-18 for this log
 
     if to_add:
         df = (
@@ -416,8 +393,6 @@ def compute_fm_scores_from_qids(
     df["gt_score"] = df.apply(_lookup_gt, axis=1).astype("Int64")
     return df
 
-
-# ─────────────────────────── Metric utilities ─────────────────────────── #
 
 def _parse_patients(spec: Optional[str]) -> Optional[Set[str]]:
     if spec is None or not str(spec).strip():
@@ -451,9 +426,9 @@ def _all_items_from_csv(csv_path: Union[str, Path]) -> Set[int]:
     return {int(x.split("_")[0]) for x in qmeta["fm_video"]}
 
 
-def aggregate_fm_metrics(
+def _aggregate_fm_metrics(
     score_df: pd.DataFrame,
-    questions_csv_path: Union[str, Path] = DataPaths.IA_QUESTIONS_PATH,
+    questions_csv_path: Union[str, Path] = DataPaths.IA_QUESTIONS_PATH1,
     *,
     fm_items: Optional[str] = None,
     patients: Optional[str] = None,
@@ -464,7 +439,7 @@ def aggregate_fm_metrics(
     Parameters
     ----------
     score_df
-        Output of `compute_fm_scores_from_qids` with columns:
+        Output of `_compute_fm_scores_from_qids` with columns:
         patient | fm_item | pred_score | gt_score
     questions_csv_path
         CSV used solely to infer the full set of fm_items when `fm_items` is not provided.
@@ -529,8 +504,7 @@ def aggregate_fm_metrics(
     return {"accuracy": float(accuracy), "apd": float(apd), "mtsd": float(mtsd)}
 
 
-
-def latest_log_path(task: str, model: str, *, logs_root: str | Path = "logs") -> Path:
+def _latest_log_path(task: str, model: str, *, logs_root: str | Path = "logs") -> Path:
     """Return the newest ``*_samples_*.jsonl`` log for ``task``/``model``.
 
     The directory layout may be either::
@@ -568,43 +542,21 @@ def latest_log_path(task: str, model: str, *, logs_root: str | Path = "logs") ->
     candidates.sort(key=lambda p: (_key(p), p.stat().st_mtime), reverse=True)
     return candidates[0]
 
-
 # --------------------------------------------------------------------------- #
-# 2.  Combine answer grids safely                                            #
-# --------------------------------------------------------------------------- #
-
-def extract_answers_combined(log_paths: Sequence[str | Path]) -> pd.DataFrame:
-    """Concatenate :func:`extract_answers` for many logs.
-
-    Duplicate *(patient, qid)* pairs across logs raise a :class:`ValueError`.
-    """
-    dfs = [extract_answers(Path(p)) for p in log_paths]
-    combined = pd.concat(dfs, ignore_index=True)
-
-    dup_mask = combined.duplicated(subset=["patient", "qid"], keep=False)
-    if dup_mask.any():
-        offending = combined.loc[dup_mask, ["patient", "qid"]]
-        raise ValueError(
-            "Duplicate (patient, qid) pairs detected:\n" + offending.to_string(index=False)
-        )
-    return combined
-
-
-# --------------------------------------------------------------------------- #
-# 3.  Model-level metrics                                                    #
+# 2.  Model-level metrics                                                    #
 # --------------------------------------------------------------------------- #
 
 def _score_df_from_logs(
     log_paths: Iterable[str | Path],
     *,
-    questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH,
+    questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH1,
     gt_csv_path: str | Path = DataPaths.IA_SCORES_PATH,
 ) -> pd.DataFrame:
     """Helper: union of score DFs computed independently from several log files."""
     score_dfs: list[pd.DataFrame] = []
     for p in log_paths:
-        ans_df = extract_answers(Path(p))
-        score_df = compute_fm_scores_from_qids(
+        ans_df = _extract_answers(Path(p))
+        score_df = _compute_fm_scores_from_qids(
             ans_df,
             questions_csv_path=questions_csv_path,
             gt_csv_path=gt_csv_path,
@@ -614,6 +566,48 @@ def _score_df_from_logs(
         columns=["patient", "fm_item", "pred_score", "gt_score"]
     )
 
+def answers_for_model(
+    model: str,
+    *,
+    tasks: Sequence[str] = ("strokerehab_ia_1", "strokerehab_ia_2"),
+    logs_root: str | Path = "logs",
+    log_paths: Sequence[str | Path] | None = None,
+    drop_parsed: bool = True,
+) -> pd.DataFrame:
+    """Like _extract_answers, but resolve *model* and *tasks* into log files if needed."""
+    if log_paths is None:
+        paths = [_latest_log_path(t, model, logs_root=logs_root) for t in tasks]
+    else:
+        paths = [Path(p) for p in log_paths]
+    return _extract_answers(paths, drop_parsed=drop_parsed)
+
+
+def fm_scores_for_model(
+    model: str,
+    *,
+    tasks: Sequence[str] = ("strokerehab_ia_1", "strokerehab_ia_2"),
+    logs_root: str | Path = "logs",
+    log_paths: Sequence[str | Path] | None = None,
+    questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH1,
+    gt_csv_path: str | Path = DataPaths.IA_SCORES_PATH,
+) -> pd.DataFrame:
+    """Like _compute_fm_scores_from_qids, but resolve *model*/*tasks* logs first."""
+    if log_paths is None:
+        paths = [_latest_log_path(t, model, logs_root=logs_root) for t in tasks]
+    else:
+        paths = [Path(p) for p in log_paths]
+
+    score_dfs = []
+    for p in paths:
+        ans_df = _extract_answers(p)
+        score_df = _compute_fm_scores_from_qids(
+            ans_df,
+            questions_csv_path=questions_csv_path,
+            gt_csv_path=gt_csv_path,
+        )
+        score_dfs.append(score_df)
+    return pd.concat(score_dfs, ignore_index=True)
+    
 
 def metrics_for_model(
     model: str,
@@ -621,7 +615,7 @@ def metrics_for_model(
     tasks: Sequence[str] = ("strokerehab_ia_1", "strokerehab_ia_2"),
     logs_root: str | Path = "logs",
     log_paths: Sequence[str | Path] | None = None,
-    questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH,
+    questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH1,
     gt_csv_path: str | Path = DataPaths.IA_SCORES_PATH,
     fm_items: str | None = None,
     patients: str | None = None,
@@ -633,10 +627,10 @@ def metrics_for_model(
     to arbitrary files.
 
     The *fm_items* and *patients* filters are passed through to
-    :func:`aggregate_fm_metrics` to “zoom in” on subsets.
+    :func:`_aggregate_fm_metrics` to “zoom in” on subsets.
     """
     if log_paths is None:
-        paths = [latest_log_path(t, model, logs_root=logs_root) for t in tasks]
+        paths = [_latest_log_path(t, model, logs_root=logs_root) for t in tasks]
     else:
         paths = [Path(p) for p in log_paths]
 
@@ -644,7 +638,7 @@ def metrics_for_model(
         paths, questions_csv_path=questions_csv_path, gt_csv_path=gt_csv_path
     )
 
-    return aggregate_fm_metrics(
+    return _aggregate_fm_metrics(
         score_df,
         questions_csv_path=questions_csv_path,
         fm_items=fm_items,
@@ -696,7 +690,7 @@ def metrics_for_models(
     *,
     tasks: Sequence[str] = ("strokerehab_ia_1", "strokerehab_ia_2"),
     logs_root: str | Path = "logs",
-    questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH,
+    questions_csv_path: str | Path = DataPaths.IA_QUESTIONS_PATH1,
     gt_csv_path: str | Path = DataPaths.IA_SCORES_PATH,
     fm_items: str | None = None,
     patients: str | None = None,
@@ -717,9 +711,9 @@ def metrics_for_models(
     questions_csv_path, gt_csv_path
         Passed through to scoring.
     fm_items, patients
-        Optional filters forwarded to :func:`aggregate_fm_metrics`.
+        Optional filters forwarded to :func:`_aggregate_fm_metrics`.
     **agg_kwargs
-        Any additional keyword args passed to :func:`aggregate_fm_metrics`.
+        Any additional keyword args passed to :func:`_aggregate_fm_metrics`.
 
     Returns
     -------
@@ -772,14 +766,15 @@ def metrics_df_to_latex(
 
 
 __all__ = [
-    "extract_answers",
-    "compute_fm_scores_from_qids",
-    "aggregate_fm_metrics",
-    "latest_log_path",
-    "metrics_for_models",
-    "metrics_df_to_latex",
+    "answers_for_model",
+    "fm_scores_for_model",
+    "metrics_for_model",
+    "metrics_for_models"
 ]
 
 
 if __name__ == "__main__":
-    print(metrics_for_models(models="qwen2_5_vl_7b,bot_8f"))
+    MODEL = "qwen2_5_vl_7b"
+    task1 = ("strokerehab_ia1_3_30", "strokerehab_ia1_31_33")  # simultaneous
+    task2 = ("strokerehab_ia2_3_30", "strokerehab_ia2_31_33")  # individual
+    print(answers_for_model(MODEL, tasks=task2))

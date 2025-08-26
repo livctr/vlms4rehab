@@ -45,10 +45,12 @@ class DataPaths:
     LABEL_METADATA_PATH = os.path.join(METADATA_DIR, "label_metadata.csv")
 
     FP_METADATA_PATH = os.path.join("./data/fp/fp_metadata.csv")
-    IA_VIDEO_METADATA_PATH = os.path.join("./data/ia/ia_video_metadata.csv")
+    IA_VIDEO_METADATA_PATH1 = os.path.join("./data/ia/ia_video_metadata1.csv")
+    IA_VIDEO_METADATA_PATH2 = os.path.join("./data/ia/ia_video_metadata2.csv")
     IA_CLIPS_PATH = os.path.join("./data/ia/fm_item_clip_times.csv")
     IA_SCORES_PATH = os.path.join("./data/ia/fm_item_scores.csv")
-    IA_QUESTIONS_PATH = os.path.join("./data/ia/fm_item_questions.csv")
+    IA_QUESTIONS_PATH1 = os.path.join("./data/ia/fm_item_questions1.csv")
+    IA_QUESTIONS_PATH2 = os.path.join("./data/ia/fm_item_questions2.csv")
 
     # the folder structure of the IA raw and clipped dirs mirrors that of the raw video dir
     IA_VIDEO_DIR = os.path.join(DATA_DIR, "VideoDataDerived/FMVideoClips/")

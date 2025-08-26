@@ -13,6 +13,7 @@ test_images_out/
 test_videos_out/
 plots/
 to_delete*
+data/ia/temporal_annotations_temp/
 
 .vscode
 

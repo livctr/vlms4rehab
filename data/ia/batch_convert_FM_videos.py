@@ -53,8 +53,10 @@ def get_all_video_files(video_path_regex=None):
 
 if __name__ == "__main__":
 
-    patient_ids = AFFECTED_PATIENTS.replace('"', '').split(',')  # replace is probably unnecessary
-    patient_ids = [pid.strip() for pid in patient_ids]
+    #patient_ids = AFFECTED_PATIENTS.replace('"', '').split(',')  # replace is probably unnecessary
+    #patient_ids = [pid.strip() for pid in patient_ids]
+    #patient_ids = ['C00011', 'C00012', 'C00015', 'C00019', 'C00020', 'C00022', 'C00023', 'C00024']
+    patient_ids = ['C00025', 'C00026', 'C00027', 'C00028', 'C00029', 'C00030', 'C00031', 'C00032', 'C0004', 'C0005', 'C0007', 'C0009']
 
     patient_pattern = r"({})[\\/]" .format("|".join(patient_ids))
     # print(patient_pattern)

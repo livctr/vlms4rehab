@@ -82,10 +82,12 @@ def concat_pair_clip(
     subprocess.run(cmd, check=True)
 
 
-def extract_clips_from_csv():
+def extract_clips_from_csv(filter_by_patients=None):
     # 1) Get the list of clips and their times
     df = pd.read_csv(DataPaths.IA_CLIPS_PATH, sep=';')
     df['patient'] = df['video_path'].apply(extract_patient)
+    if filter_by_patients is not None:
+        df = df[df['patient'].isin(filter_by_patients)].copy()
     df['video_path'] = df['video_path'].apply(add_folder_if_needed)
     df['fm_range']  = df['fm_item'].str[:-1].str.replace('-', '_')
     df['side']      = df['fm_item'].str[-1]
@@ -137,6 +139,8 @@ def extract_clips_from_csv():
             print(f"🎬  Extracting {idx:02d}: {start} → {end} → {out_path.name}")
             subprocess.run(cmd, check=True)
 
+            break  # Only use the first repetition
+
     # 3) for each fm_range, pair up L/R and produce concatenations
     for (patient, fm_range), sides in clips_map.items():
         L_list = sorted(sides.get('L', []))
@@ -144,16 +148,21 @@ def extract_clips_from_csv():
         num    = min(len(L_list), len(R_list))
         out_dir = Path(DataPaths.IA_CLIPPED_VIDEO_DIR) / patient
 
+        # This prints each repetition
         for i in range(num):
             concat_pair_clip(L_list[i], R_list[i], out_dir, patient, fm_range, i)
 
+            break  # Only use the first repetition
 
-def write_ia_video_metadata():
+
+def write_ia_video_metadata(
+    output_path=DataPaths.IA_VIDEO_METADATA_PATH1,
+    questions_path=DataPaths.IA_QUESTIONS_PATH1
+):
     """
     Write the set of videos with attached questions to the metadata file.
     """
     clipped_dir = Path(DataPaths.IA_CLIPPED_VIDEO_DIR)
-    output_path = Path(DataPaths.IA_VIDEO_METADATA_PATH)
 
     # Find all .mp4 files recursively
     mp4_files = clipped_dir.rglob("*.mp4")
@@ -193,13 +202,17 @@ def write_ia_video_metadata():
     
     # side_affected
     df['duration_s'] = df['path_v'].apply(lambda p: get_video_meta(Path(clipped_dir) / p)[2])
-    scores_df = pd.read_csv(DataPaths.IA_SCORES_PATH)
+    scores_df = pd.read_csv(DataPaths.IA_SCORES_PATH, dtype={'Subject ID': str})
     mapper = scores_df[['Subject ID', 'Side of body affected']]
     mapper = mapper.set_index('Subject ID')['Side of body affected'].to_dict()
+
     df['side_affected'] = df['patient'].map(mapper)
 
+    # Assume control patient's affected side is the right side.
+    df['side_affected'] = df['side_affected'].fillna('Right')
+
     # 2) Filter based on the questions asked
-    questions_df = pd.read_csv(DataPaths.IA_QUESTIONS_PATH)
+    questions_df = pd.read_csv(questions_path)
     # `fm_videos_with_questions` is formatted as `{fm_item}_[C/I]`
     # `C` = concatenated. `I` = individual.
     # We need to see for each video, whether it is needed.
@@ -244,5 +257,6 @@ def write_ia_video_metadata():
 
 
 if __name__ == "__main__":
-    extract_clips_from_csv()
-    write_ia_video_metadata()
+    extract_clips_from_csv(['C00011', 'S0005', 'S0001', 'S00021'])
+    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH1, DataPaths.IA_QUESTIONS_PATH1)
+    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH2, DataPaths.IA_QUESTIONS_PATH2)
