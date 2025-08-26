@@ -245,7 +245,7 @@ sr_ia_process_results1 = partial(sr_ia_process_results, questions_path=DataPaths
 # Method 2: individual
 # - Load the right videos
 load_sria2_3_30 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30', reps='first',
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='13', reps='first',  # 3-17,19-30
     metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2
 )
 load_sria2_31_33 = partial(
