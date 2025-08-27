@@ -11,6 +11,8 @@ import pandas as pd
 from data.utils_strokerehab import DataPaths, FM_ITEM_TO_FM_RANGE
 
 
+PATIENTS = 'C00011,S0005,S0001,S00021'
+USE_VIEW = 'annotated_view'
 IA_VIDEO_QUESTIONS = None
 
 def sr_ia_doc_to_visual(doc, lmms_eval_specific_kwargs=None):
@@ -35,7 +37,7 @@ def _get_video_questions(questions_path):
         fm_low = FM_ITEM_TO_FM_RANGE[fm_item][0]
         fm_high = FM_ITEM_TO_FM_RANGE[fm_item][1]
         fm_laterality = fm_video.split('_')[1]  # B, A, or H
-        fm_view = fm_video.split('_')[2]  # F or S
+        fm_view = fm_video.split('_')[2]  # F or S. 
         video_questions[(fm_low, fm_high, fm_laterality, fm_view)].append(row.to_dict())
 
     return video_questions
@@ -55,12 +57,24 @@ def sr_ia_doc_to_text(doc, questions_path, return_ids=False):
     # affected_video_loc: Top, Center, Left
 
     # Get all questions relevant to this video: (fm_low, fm_high, fm_laterality, fm_view) -> question
-    global IA_VIDEO_QUESTIONS
+    global IA_VIDEO_QUESTIONS, USE_VIEW
     if IA_VIDEO_QUESTIONS is None:
         IA_VIDEO_QUESTIONS = _get_video_questions(questions_path)
 
-    # Get all questions relevant to this video: (fm_low, fm_high, laterality, fm_view) -> question
-    questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], doc["video_view"])]
+    # Current bug: using 'question_view' gives us duplicates when more than 1 view for the same FM item
+    # is specified in the questions CSV. Originally, we did not specify the "view", so when two views
+    # are present, we run doc_to_text twice and get the same set of questions for the two views.
+    # Adding doc['video_view'] solves this issue, but let's see if 'annotated_view' still works.
+
+    # For annotated view, if the annotated view and question view differ, you should check both 'F' and 'S'
+    # to see if they're in the dictionary.
+    # Get all questions relevant to this video: (fm_low, fm_high, fm_laterality, fm_view) -> question
+    if USE_VIEW == 'question_view':
+        questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], doc["video_view"])]
+    else:
+        questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], 'F')]
+        questions_with_meta.extend(IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], 'S')])
+
     questions = [q["question"] for q in questions_with_meta]
     ids = [str(q["qid"]) for q in questions_with_meta]
 
@@ -195,17 +209,18 @@ def load_strokerehab_ia_dataset(
     return dataset_dict
 
 
-PATIENTS = 'C00011,S0005,S0001,S00021'
 # PATIENTS = 'C00011,S00021'
 # Method 1: simultaneous feed-in
 # - Load the right videos
 load_sria1_3_30 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30', reps='first',
-    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH1
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH1,
+    filter_by=USE_VIEW
 )
 load_sria1_31_33 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33', reps='first',
-    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH1
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH1,
+    filter_by=USE_VIEW
 )
 # - Use the right prompts (and attach the right qids)
 sr_ia_doc_to_text1 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH1)
@@ -215,13 +230,25 @@ sr_ia_process_results1 = partial(sr_ia_process_results, questions_path=DataPaths
 # Method 2: individual
 # - Load the right videos
 load_sria2_3_30 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='13', reps='first',  # 3-17,19-30
-    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='13',  # 3-17,19-30
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2,
+    filter_by=USE_VIEW
 )
 load_sria2_31_33 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33', reps='first',
-    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2,
+    filter_by=USE_VIEW
 )
 # - Use the right prompts (and attach the right qids)
 sr_ia_doc_to_text2 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH2)
 sr_ia_process_results2 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH2)
+
+
+# Method 3
+load_sria3_3_30 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='13',  # 3-17,19-30
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH3,
+    filter_by=USE_VIEW
+)
+sr_ia_doc_to_text3 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH3)
+sr_ia_process_results3 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH3)
