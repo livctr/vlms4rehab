@@ -31,7 +31,12 @@ wandb_entity="cvfm4rehab"  #"cvfm4rehab"  # leave empty if not using wandb
 
 num_processes_pre=1
 num_processes=1
-available_models="llava_ov_0p5b,\
+available_models="bot_8f,\
+bot_32f,\
+qwen2_5_vl_7b,\
+qwen2_5_vl_32b,\
+qwen2_5_vl_72b,\
+llava_ov_0p5b,\
 llava_ov_7b,\
 llava_ov_72b,\
 llava_next_video_7b,\
@@ -43,12 +48,23 @@ internvl_2p5_78b,\
 longva_7b,\
 nvila_8b,\
 nvila_15b"
-available_small_models="llava_ov_0p5b,\
+available_small_models="bot_8f,\
+bot_32f,\
+qwen2_5_vl_7b,\
+llava_ov_0p5b,\
 llava_ov_7b,\
 llava_next_video_7b,\
 internvl_2p5_2b,\
 longva_7b,\
 nvila_8b"
+available_big_models="qwen2_5_vl_32b,\
+qwen2_5_vl_72b,\
+llava_ov_72b,\
+llava_next_video_72b,\
+internvl_2p5_8b,\
+internvl_2p5_38b,\
+nvila_15b,\
+internvl_2p5_78b"
 launcher=accelerate
 log_path="./logs"
 
@@ -118,6 +134,10 @@ if [ "$models" = "small" ]; then
     IFS=',' read -r -a models <<<"$available_small_models"
 fi
 
+if [ "$models" = "big" ]; then
+    IFS=',' read -r -a models <<<"$available_big_models"
+fi
+
 time_str=""
 
 for model in "${models[@]}"; do
@@ -136,10 +156,40 @@ for model in "${models[@]}"; do
             model_task_args=",sampling_strategy=dense,sampling_fps=1,overlap_frames_num=0"
             wandb_project="$task"
             ;;
-        "strokerehab_primitives")
+        "strokerehab_primitives"*)
             benchmark="$task"
             output_path="${log_path}/${task}"
-            model_task_args=",sampling_strategy=dense,sampling_fps=8,overlap_frames_num=0"
+            model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
+            wandb_project="$task"
+            ;;
+        "strokerehab_ia1_3_30")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=uniform"
+            wandb_project="$task"
+            ;;
+        "strokerehab_ia1_31_33")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
+            wandb_project="$task"
+            ;;
+        "strokerehab_ia2_3_30")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=uniform"
+            wandb_project="$task"
+            ;;
+        "strokerehab_ia2_31_33")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
+            wandb_project="$task"
+            ;;
+        "strokerehab_ia3_3_30")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=uniform"
             wandb_project="$task"
             ;;
         "strokerehab_describe")
@@ -174,6 +224,24 @@ for model in "${models[@]}"; do
             model_family="gpt4v"
             model_args="model_version=gpt-4o-2024-08-06,modality=video,max_frames_num=16"
             num_processes=1
+            ;;
+        "qwen2_5_vl_7b")
+            conda activate cvfm4rehab
+            model_family="qwen2_5_vl"
+            model_args="pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=32"
+            num_processes=$num_processes_pre
+            ;;
+        "qwen2_5_vl_32b")
+            conda activate cvfm4rehab
+            model_family="qwen2_5_vl"
+            model_args="pretrained=Qwen/Qwen2.5-VL-32B-Instruct,max_frames_num=32"
+            num_processes=$num_processes_pre
+            ;;
+        "qwen2_5_vl_72b")
+            conda activate cvfm4rehab
+            model_family="qwen2_5_vl"
+            model_args="pretrained=Qwen/Qwen2.5-VL-72B-Instruct,max_frames_num=32"
+            num_processes=$num_processes_pre
             ;;
         "llava_ov_0p5b")
             conda activate cvfm4rehab_llava
@@ -245,6 +313,24 @@ for model in "${models[@]}"; do
             conda activate cvfm4rehab_vila
             model_family="nvila"
             model_args="pretrained=Efficient-Large-Model/NVILA-15B,video_decode_backend=decord,conv_template=auto,max_frames_num=8"
+            num_processes=1
+            ;;
+        "naveens_fp_pipeline")
+            conda activate cvfm4rehab
+            model_family="naveens_fp_pipeline"
+            model_args=""
+            num_processes=1
+            ;;
+        "bot_8f")
+            conda activate cvfm4rehab
+            model_family="bot"
+            model_args="video_decode_backend=decord,max_frames_num=8"
+            num_processes=1
+            ;;
+        "bot_32f")
+            conda activate cvfm4rehab
+            model_family="bot"
+            model_args="video_decode_backend=decord,max_frames_num=32"
             num_processes=1
             ;;
         *)
