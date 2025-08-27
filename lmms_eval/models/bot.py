@@ -193,14 +193,11 @@ class Bot(lmms):
                 video_window_outputs = []
 
                 for context in context_with_multiple_questions_list:
-                    if "2" in context or "tremor" in context or "dysmetria" in context or "many times" in context:
-                        sim_response = "2"
-                    else:
-                        sim_response = "No"
+                    sim_response = "IDLE"
                     video_window_outputs.append(sim_response)
                 # Join the outputs for this video window
                 video_window_outputs = " <SEP> ".join(video_window_outputs)
-
+                import pdb ; pdb.set_trace()
                 outputs.append((video_window_outputs, start_time_s, end_time_s))
 
             res.append(outputs)

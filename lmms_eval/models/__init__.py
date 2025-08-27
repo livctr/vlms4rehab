@@ -39,6 +39,8 @@ AVAILABLE_MODELS = {
     "minimonkey": "MiniMonkey",
     "moviechat": "MovieChat",
     "mplug_owl_video": "mplug_Owl",
+    "naveens_fp_pipeline": "NaveensFPPipeline",
+    # "naveens_ia_pipeline": "NaveensIAPipeline",
     "ola": "Ola",
     "openai_compatible": "OpenAICompatible",
     "oryx": "Oryx",
