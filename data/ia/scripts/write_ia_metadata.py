@@ -253,7 +253,6 @@ def extract_FM_clips(filter_by_patients=None, force_extract=False):
 def write_ia_video_metadata(
     output_path=DataPaths.IA_VIDEO_METADATA_PATH1,
     questions_path=DataPaths.IA_QUESTIONS_PATH1,
-    use_view="Question"
 ):
     """
     Write the set of videos with attached questions to the metadata file.
@@ -274,8 +273,6 @@ def write_ia_video_metadata(
     - question_view: True iff this view is referred to in the questions CSV.
     - duration: video duration in seconds.
     """
-    assert use_view in ["Annotated", "Question"], f"Unknown use_view: {use_view}"
-
     clipped_dir = Path(DataPaths.IA_CLIPPED_VIDEO_DIR)
 
     # Find all .mp4 files recursively
@@ -350,25 +347,35 @@ def write_ia_video_metadata(
     df['laterality'] = df['laterality'].map({'BT': 'B', 'BS': 'B', 'A': 'A', 'H': 'H'})
     df.rename(columns={"view": "video_view"}, inplace=True)
 
-    df['is_annotated_view'] = df['is_annotated_view'].apply(
-        lambda x: 'F' if x == 'Front' else ('S' if x == 'Left' else ('S' if x == 'Right' else None))
-    )
-    df['is_annotated_view'] = df['is_annotated_view'] == df['video_view']
-
-    # 2) Filter based on the questions asked
+    # Create 'is_question_view' based on questions asked
     questions_df = pd.read_csv(questions_path)
     questions_df['fm_item'] = questions_df['fm_video'].apply(lambda x: x.split('_')[0])
     questions_df['laterality'] = questions_df['fm_video'].apply(lambda x: x.split('_')[1])
-    questions_df['is_question_view'] = questions_df['fm_video'].apply(lambda x: x.split('_')[2])
-    fm_range_to_qtypes = defaultdict(set)
+    questions_df['question_view'] = questions_df['fm_video'].apply(lambda x: x.split('_')[2])
+    fm_range_to_qview = defaultdict(set)
     for _, row in questions_df.iterrows():
         fm_range = FM_ITEM_TO_FM_RANGE[int(row['fm_item'])]
-        fm_range_to_qtypes[fm_range].add((row['laterality'], row['is_question_view']))
+        fm_range_to_qview[fm_range].add((row['laterality'], row['question_view']))
 
     def is_question_view(row):
-        return (row['laterality'], row['video_view']) in fm_range_to_qtypes[(row['fm_low'], row['fm_high'])]
-
+        return (row['laterality'], row['video_view']) in fm_range_to_qview[(row['fm_low'], row['fm_high'])]
     df['is_question_view'] = df.apply(is_question_view, axis=1)
+
+    # Create 'is_annotated_view' based on questions asked and the view of the annotation
+    fm_range_to_laterality = defaultdict(set)
+    for _, row in questions_df.iterrows():
+        fm_range = FM_ITEM_TO_FM_RANGE[int(row['fm_item'])]
+        fm_range_to_laterality[fm_range].add(row['laterality'])
+    def is_question_laterality(row):
+        return row['laterality'] in fm_range_to_laterality[(row['fm_low'], row['fm_high'])]
+    df['is_question_laterality'] = df.apply(is_question_laterality, axis=1)
+
+    df['is_annotated_view'] = df['is_annotated_view'].apply(
+        lambda x: 'F' if x == 'Front' else ('S' if x == 'Left' else ('S' if x == 'Right' else None))
+    )
+    df['is_annotated_view'] = (df['is_annotated_view'] == df['video_view']) & \
+                                (df['is_question_laterality'])
+    df.drop('is_question_laterality', axis=1, inplace=True)
 
     df['duration'] = df['path_v'].apply(lambda p: get_video_meta(clipped_dir / p)[2])
 
@@ -378,6 +385,7 @@ def write_ia_video_metadata(
 
 
 if __name__ == "__main__":
-    extract_FM_clips(['C00011', 'S0005', 'S0001', 'S00021'])
-    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH1, DataPaths.IA_QUESTIONS_PATH1)
-    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH2, DataPaths.IA_QUESTIONS_PATH2)
+    # extract_FM_clips(['C00011', 'S0005', 'S0001', 'S00021'])
+    # write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH1, DataPaths.IA_QUESTIONS_PATH1)
+    # write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH2, DataPaths.IA_QUESTIONS_PATH2)
+    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH3, DataPaths.IA_QUESTIONS_PATH3)
