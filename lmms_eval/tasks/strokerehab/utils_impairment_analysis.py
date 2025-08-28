@@ -72,7 +72,8 @@ def sr_ia_doc_to_text(doc, questions_path, return_ids=False):
     if USE_VIEW == 'question_view':
         questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], doc["video_view"])]
     else:
-        questions_with_meta = IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], 'F')]
+        questions_with_meta = []
+        questions_with_meta.extend(IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], 'F')])
         questions_with_meta.extend(IA_VIDEO_QUESTIONS[(doc["fm_low"], doc["fm_high"], doc["laterality"], 'S')])
 
     questions = [q["question"] for q in questions_with_meta]

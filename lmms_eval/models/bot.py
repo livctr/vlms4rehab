@@ -193,7 +193,7 @@ class Bot(lmms):
                 video_window_outputs = []
 
                 for context in context_with_multiple_questions_list:
-                    sim_response = "IDLE"
+                    sim_response = "NO"
                     video_window_outputs.append(sim_response)
                 # Join the outputs for this video window
                 video_window_outputs = " <SEP> ".join(video_window_outputs)
