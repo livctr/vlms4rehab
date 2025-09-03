@@ -5,9 +5,12 @@ qid,fm_video,question_type,sampling,binary_no_score,binary_yes_score,question
 3,6_B_F,rate,uniform,,,"Assess the left video's maximal shoulder external rotation relative to the right video at the ending position, focusing on the visibility of the elbow crease. Rate as follows: 0 (no external rotation), 1 (partial external rotation), or 2 (full external rotation with elbow crease fully visible, comparable to the right video). Answer directly."
 4,7_B_F,rate,uniform,,,"Assess the left video's maximal elbow flexion relative to the right video, focusing on the ending position. Rate as follows: 0 (no flexion), 1 (partial flexion), or 2 (full flexion with forearm closely approaching upper arm, comparable to the right video). Answer directly."
 5,8_B_F,rate,uniform,,,"Assess the left video's maximal forearm supination relative to the right video, focusing on the visibility of the back of the hand. Rate as follows: 0 (no supination), 1 (partial supination; <1/2 back of hand visible), or 2 (full supination with >= 1/2 back of hand visible, comparable to the right video). Answer directly."
+
 6,9_B_F,rate,uniform,,,"Assess the left video's maximal shoulder adduction and internal rotation relative to the right video, focusing on whether the arm crosses the midline to the opposite knee. Rate as follows: 0 (no adduction/internal rotation), 1 (partial crossing or effort), or 2 (full crossing to the opposite knee, comparable to the right video). Answer directly."
 7,10_B_F,rate,uniform,,,"Assess the left video's maximal elbow extension relative to the right video, focusing on the degree of straightening. Rate as follows: 0 (no extension), 1 (partial extension), or 2 (full extension to 0 degrees, comparable to the right video). Answer directly."
 8,11_B_F,rate,uniform,,,"Assess the left video's maximal forearm pronation relative to the right video, focusing on palm orientation. Rate as follows: 0 (no pronation), 1 (partial pronation; palm not fully down), or 2 (full pronation with palm facing downward, comparable to the right video). Answer directly."
+
+
 9,12_B_S,rate,uniform,,,"Assess the left video's maximal hand-to-lumbar spine movement relative to the right video, focusing on how far the back of the hand reaches. Rate as follows: 0 (no finger passed ASIS or Anterior Superior Iliac Spine), 1 (≥1 finger passed ASIS but cannot touch lumbar spine), or 2 (back of hand reaches lumbar spine, comparable to the right video). Answer directly."
 10,13_A_S,binary,uniform,0,,"Is the arm down at the side at onset? Answer 'Yes' or 'No' directly."
 11,13_A_S,binary,uniform,0,,"Is the elbow fully extended (straight) at onset? Answer 'Yes' or 'No' directly."
@@ -100,3 +103,6 @@ qid,fm_video,question_type,sampling,binary_no_score,binary_yes_score,question
 98,33_A_F,count,dense,,,"How many times did the patient touch their nose? Output just the number directly."
 99,33_H_F,count,dense,,,"How many times did the patient touch their knee? Output just the number directly."
 100,33_H_F,count,dense,,,"How many times did the patient touch their nose? Output just the number directly."
+
+
+When done, check B's

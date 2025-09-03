@@ -95,7 +95,7 @@ def sr_ia_doc_to_text(doc, questions_path, return_ids=False):
     elif doc['affected_video_loc'] == "Top":
         referred_video_mapping = {"left video": "top video", "right video": "bottom video"}
         # Replace in questions
-        _pattern = re.compile(r'\b(?:left video|right video)\b')
+        _pattern = re.compile(r'\b(?:left video|right video)\b', re.IGNORECASE)
         for i, q in enumerate(questions):
             questions[i] = _pattern.sub(lambda m: referred_video_mapping[m.group(0)], q)
 
@@ -245,15 +245,33 @@ load_sria2_31_33 = partial(
 sr_ia_doc_to_text2 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH2)
 sr_ia_process_results2 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH2)
 
-
 # Method 3
 load_sria3_3_30 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='9-11',  # 3-17,19-30
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH3,
+    filter_by=USE_VIEW
+)
+load_sria3_31_33 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33',
     metadata_path=DataPaths.IA_VIDEO_METADATA_PATH3,
     filter_by=USE_VIEW
 )
 sr_ia_doc_to_text3 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH3)
 sr_ia_process_results3 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH3)
+
+# Method 4
+load_sria4_3_30 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH4,
+    filter_by=USE_VIEW
+)
+load_sria4_31_33 = partial(
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='31-33',
+    metadata_path=DataPaths.IA_VIDEO_METADATA_PATH4,
+    filter_by=USE_VIEW
+)
+sr_ia_doc_to_text4 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH4)
+sr_ia_process_results4 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH4)
 
 
 if __name__ == "__main__":
