@@ -141,7 +141,7 @@ def _calc_answer(qid: int, triples: List[Tuple[str, float, float]]) -> object:
         return np.inf
 
     # Fallback
-    return pd.NA
+    return triples[0][0] if triples else pd.NA
 
 
 # ───────────────────────────── Public API ───────────────────────────── #
@@ -262,6 +262,10 @@ def _score_single_row(row: pd.Series) -> Tuple[bool, Optional[int]]:
         if "no" in ans and pd.notna(row.binary_no_score):
             return True, int(row.binary_no_score)
         return False, None
+    
+    m = re.search(r'FINAL_(?:SCORE|ANSWER)[^\d]*([012])\s*$', ans, re.IGNORECASE)
+    if m:
+        return True, int(m.group(1))
 
     m = re.search(r"\b([012])\b", ans)
     return (True, int(m.group(1))) if m else (False, None)

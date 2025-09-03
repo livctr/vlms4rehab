@@ -1,3 +1,4 @@
+import shutil
 from typing import Dict, Tuple, List
 from collections import defaultdict
 from functools import partial
@@ -12,7 +13,7 @@ from data.utils_strokerehab import DataPaths, FM_ITEM_TO_FM_RANGE
 
 
 PATIENTS = 'C00011,S0005,S0001,S00021'
-USE_VIEW = 'annotated_view'
+USE_VIEW = 'question_view'
 IA_VIDEO_QUESTIONS = None
 
 def sr_ia_doc_to_visual(doc, lmms_eval_specific_kwargs=None):
@@ -247,9 +248,25 @@ sr_ia_process_results2 = partial(sr_ia_process_results, questions_path=DataPaths
 
 # Method 3
 load_sria3_3_30 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='13',  # 3-17,19-30
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='9-11',  # 3-17,19-30
     metadata_path=DataPaths.IA_VIDEO_METADATA_PATH3,
     filter_by=USE_VIEW
 )
 sr_ia_doc_to_text3 = partial(sr_ia_doc_to_text, questions_path=DataPaths.IA_QUESTIONS_PATH3)
 sr_ia_process_results3 = partial(sr_ia_process_results, questions_path=DataPaths.IA_QUESTIONS_PATH3)
+
+
+if __name__ == "__main__":
+    ds = load_strokerehab_ia_dataset(
+        patients=PATIENTS,
+        fm_items='3-17,19-30',
+        metadata_path=DataPaths.IA_VIDEO_METADATA_PATH3,
+    )
+    import pdb ; pdb.set_trace()
+    for row in ds['test']:
+        video_path = os.path.join(DataPaths.IA_CLIPPED_VIDEO_DIR, row['path_v'])
+        # Save to "examples/"
+        examples_dir = "examples/"
+        os.makedirs(examples_dir, exist_ok=True)
+        shutil.copy(video_path, examples_dir)
+        print(video_path)
