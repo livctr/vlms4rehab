@@ -389,3 +389,4 @@ if __name__ == "__main__":
     # write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH1, DataPaths.IA_QUESTIONS_PATH1)
     # write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH2, DataPaths.IA_QUESTIONS_PATH2)
     write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH3, DataPaths.IA_QUESTIONS_PATH3)
+    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH4, DataPaths.IA_QUESTIONS_PATH4)
