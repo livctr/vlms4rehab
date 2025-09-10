@@ -24,6 +24,7 @@ conda create -n cvfm4rehab python=3.10 $yes_flag
 conda activate cvfm4rehab
 pip install -e .[metrics,tools]
 pip install qwen_vl_utils
+pip install ultralytics
 ################################# cvfm4rehab END ##################################
 
 ################################# cvfm4rehab_llava BEGIN ################################
