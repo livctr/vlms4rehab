@@ -118,6 +118,10 @@ while [[ $# -gt 0 ]]; do
         log_path="$2"
         shift 2
         ;;
+    --model_args)
+        user_provided_model_args="$2"
+        shift 2
+        ;;
     *)
         echo "Unknown argument: $1"
         exit 1
@@ -314,7 +318,7 @@ for model in "${models[@]}"; do
             model_args="pretrained=Efficient-Large-Model/NVILA-15B,video_decode_backend=decord,conv_template=auto,max_frames_num=8"
             num_processes=1
             ;;
-        "naveens_fp_pipeline")
+        "naveens_pipeline")
             conda activate cvfm4rehab
             model_family="naveens_fp_pipeline"
             model_args=""
@@ -349,9 +353,15 @@ for model in "${models[@]}"; do
                 "
         fi
 
+        if [ -n "$user_provided_model_args" ]; then
+            all_model_args="$user_provided_model_args"
+        else 
+            all_model_args="${model_args}${model_task_args}"
+        fi
+
         evaluate_script="$evaluate_script -m lmms_eval \
             --model $model_family \
-            --model_args "${model_args}${model_task_args}" \
+            --model_args "$all_model_args" \
             --tasks $benchmark \
             --verbosity DEBUG \
             --batch_size 1 \

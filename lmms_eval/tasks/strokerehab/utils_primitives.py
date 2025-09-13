@@ -103,11 +103,11 @@ def sr_primitives_doc_to_text(doc, lmms_eval_specific_kwargs=None):
             f"Focus on the patient's {which_hand}. Output the functional primitive "
             f"performed by the patient's {which_hand} as a single word.\n\n"
             f"Functional primitives: \n"
-            f"- IDLE: hand is waiting\n"
-            f"- REACH: hand in motion with the purpose of contact with an object\n"
-            f"- REPOSITION: hand in motion with no contact at the endpoint\n"
-            f"- STABILIZE: hand steady to keep a target object still\n"
-            f"- TRANSPORT: hand in motion to convey an object in space\n"
+            f"- IDLE: the hand is not moving and not holding anything\n"
+            f"- REACH: the hand is moving towards an object to grasp it\n"
+            f"- REPOSITION: the hand is moving but without meaning to grab an object\n"
+            f"- STABILIZE: the hand is holding something still\n"
+            f"- TRANSPORT: the hand is holding something and moving it\n"
             f"Only output one functional primitive.\n\n"
         )
     elif prompt == "single_motion_and_contact":

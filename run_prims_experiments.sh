@@ -1,0 +1,6 @@
+sb evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=1,sampling_strategy=dense,sampling_fps=1,overlap_frames_num=0"
+sb evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=2,sampling_strategy=dense,sampling_fps=2,overlap_frames_num=0"
+sb evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=4,sampling_strategy=dense,sampling_fps=4,overlap_frames_num=0"
+sb evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=8,sampling_strategy=dense,sampling_fps=8,overlap_frames_num=0"
+sb evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=15,sampling_strategy=dense,sampling_fps=15,overlap_frames_num=0"
+sb evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=30,sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
