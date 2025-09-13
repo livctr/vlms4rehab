@@ -17,6 +17,8 @@ from transformers import (
     AutoTokenizer,
     Qwen2_5_VLForConditionalGeneration,
 )
+from transformers import logging
+logging.set_verbosity_error()
 from transformers.cache_utils import DynamicCache
 
 from lmms_eval import utils
