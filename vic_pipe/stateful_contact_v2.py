@@ -21,13 +21,13 @@ from lmms_eval.models.model_utils.load_video import load_long_video_decord
 from tools.ultralytics_pose import Pose2DStream
 from vic_pipe.contact_v2 import HandLocator, HandCropper
 
-logging.basicConfig(
-    filename="results/statemachine.log",  # your log file
-    filemode="a",  # append mode
-    level=logging.INFO,  # or DEBUG if you want more verbosity
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-logger = logging.getLogger(__name__)
+# logging.basicConfig(
+#     filename="results/statemachine.log",  # your log file
+#     filemode="a",  # append mode
+#     level=logging.INFO,  # or DEBUG if you want more verbosity
+#     format="%(asctime)s [%(levelname)s] %(message)s",
+# )
+# logger = logging.getLogger(__name__)
 
 
 ####################################### DATA CLASSES #######################################
@@ -49,7 +49,7 @@ class HandContactCtx:
     status: str = HandStateStatus.OK  # "OK" | "ABSTAIN" | "FAST MOVEMENT"
     # Whether in contact with an object (List in case multiple contacts in a window)
     contacts: List[bool] = field(default_factory=lambda: [False])
-    last_contact_box: Optional[Tuple[int, int, int, int]] = None
+    last_box: Optional[Tuple[int, int, int, int]] = None
     last_ok_box: Optional[Tuple[int, int, int, int]] = (
         None  # (x1, y1, x2, y2) of last frame in last chunk that is ok
     )
@@ -92,14 +92,21 @@ class VLMProtocol(Protocol):
 ####################################### IDLE SECTION #######################################
 
 ##### --------------------------------- Prompts --------------------------------- #####
-# IDLE_PROMPT = (
-#     "Is the hand idle (i.e. resting on a table or surface without intent "
-#     "to grasp or release any objects)? Answer 'Yes.' or 'No.' directly.\n"
-# )
 IDLE_PROMPT = (
-    "Is the hand at rest on a surface without intent to grasp or release any objects? "
-    # "Is the hand idle (not moving or barely moving)? Answer 'Yes.' or 'No.' directly.\n"
+    "Is the hand idle (i.e. resting on a table or surface without intent "
+    "to grasp or release any objects)? Answer 'Yes.' or 'No.' directly.\n"
 )
+PREV_IDLE_PROMPT = (
+    "This is a chunk in a video sequence. In the previous chunk, the hand was idle "
+    "(i.e. resting on a table or surface without intent to grasp or release an objects). "
+    "Answer directly: 'Idle.' if the hand remains idle in this chunk; answer 'Active.' otherwise.\n"
+)
+PREV_NOT_IDLE_PROMPT = (
+    "This is a chunk in a video sequence. In the previous chunk, the hand was active "
+    "(i.e. it was moving and/or interacting with an object). "
+    "Answer directly: 'Active.' if the hand remains active in this chunk; answer 'Idle.' otherwise.\n"
+)
+
 
 ##### --------------------------------- Nodes --------------------------------- #####
 
@@ -153,17 +160,43 @@ class IdleStateNode:
         elif pose_status == HandStateStatus.OK:
             # OK: ask the VLM
             cropped_frames = _get_cropped(frames, bboxes)  # Zoom in on the correct hand
-            ans = self._query_vlm(cropped_frames, IDLE_PROMPT).lower()
-            if "yes" in ans:
-                return [True], {
-                    "method": "prompt",
-                    "outputs": f"Idle: {prev_idle} -> True. Ans: {ans}",
-                }
+
+            # ans = self._query_vlm(cropped_frames, IDLE_PROMPT).lower()
+            # if "no" in ans:
+            #     return [True], {
+            #         "method": "prompt",
+            #         "outputs": f"Idle: {prev_idle} -> True. Ans: {ans}",
+            #     }
+            # else:
+            #     return [False], {
+            #         "method": "prompt",
+            #         "outputs": f"Idle: {prev_idle} -> False. Ans: {ans}",
+            #     }
+            
+            if prev_idle:
+                ans = self._query_vlm(cropped_frames, PREV_IDLE_PROMPT).lower()
+                if "active" in ans:
+                    return [False], {
+                        "method": "[PREV_IDLE_PROMPT]",
+                        "outputs": f"Idle: {prev_idle} -> False. Ans: {ans}",
+                    }
+                else:
+                    return [True], {
+                        "method": "[PREV_IDLE_PROMPT]",
+                        "outputs": f"Idle: {prev_idle} -> True. Ans: {ans}",
+                    }
             else:
-                return [False], {
-                    "method": "prompt",
-                    "outputs": f"Idle: {prev_idle} -> False. Ans: {ans}",
-                }
+                ans = self._query_vlm(cropped_frames, PREV_NOT_IDLE_PROMPT).lower()
+                if "idle" in ans:
+                    return [True], {
+                        "method": "[PREV_NOT_IDLE_PROMPT]",
+                        "outputs": f"Idle: {prev_idle} -> True. Ans: {ans}",
+                    }
+                else:
+                    return [False], {
+                        "method": "[PREV_NOT_IDLE_PROMPT]",
+                        "outputs": f"Idle: {prev_idle} -> False. Ans: {ans}",
+                    }
         else:
             raise ValueError(f"Unknown pose status: {pose_status}")
 
@@ -182,11 +215,10 @@ WHICH_OBJECT_IN_CONTACT_PROMPT = (
 WHAT_COLOR_IS_THE_OBJECT_PROMPT = (
     "What color is the object being held? Answer directly (e.g. 'Red.', 'Blue.').\n"
 )
-# Remove 'visibly' in the prompt. We'll use the motion blur check below.
 RELEASE_PROMPT = (
     "This is a chunk from a video sequence. In the previous chunk, the hand was holding a(n) {target_object}. "
-    "Answer directly: 'Yes.' if the hand lets go of the object in this chunk and the object is at least "
-    "partially visible; answer 'No.' otherwise.\n"
+    "Answer directly: 'Yes.' if the hand lets go of it in this chunk and the {target_object} is visible; "
+    "answer 'No.' otherwise.\n"
 )
 GRASP_PROMPT = (
     "This is a chunk in a video sequence. The hand was not holding anything in the previous chunk. "
@@ -342,7 +374,7 @@ class ContactStateNode(ABC):
                             held_object,
                             {
                                 "method": "state_dependent_prompt",
-                                "outputs": f"No items -> Hold {held_object}. Ans: {ans} | {ans2}",
+                                "outputs": f"No items -> Hold {held_object}. Ans: {ans} | [check active interaction] {ans2}",
                             },
                         )
                 else:
@@ -385,12 +417,10 @@ class ContactStateNode(ABC):
             return 0.0  # or raise ValueError("Degenerate boxes")
         return interArea / denom
 
-    def _do_second_look_for_fast_movement(
+    def _do_second_look_for_release(
         self,
         pose_status: str,
         frames: np.ndarray,
-        bboxes: List[Tuple[int, int, int, int]],
-        overlap_thresh: float = 0.1,
     ) -> Tuple[str, List[bool], Optional[str], Dict[str, Any]]:
         """
         Motion blur can obscure an object. Check the spot of the last OK.
@@ -405,7 +435,7 @@ class ContactStateNode(ABC):
         prev_contact = self.contact_ctx.contacts[-1]
         assert prev_contact == True
 
-        last_box = self.contact_ctx.last_ok_box
+        last_box = self.contact_ctx.last_box
         last_boxes = [last_box] * len(frames)
         cropped_frames_prev_loc = _get_cropped(frames, last_boxes)
 
@@ -417,21 +447,8 @@ class ContactStateNode(ABC):
             **{**self.fmt, "target_object": target_object},
         ).lower()
         if "yes" in ans1:
-            # Sufficient overlap between the current box and last known OK box?
-            max_overlap = max([self._bbox_overlap(b1, last_box) for b1 in bboxes])
-            if max_overlap < overlap_thresh:
-                # The hand moved away, the object is visible in prev location, we must have released
-                return (
-                    pose_status,
-                    [False],
-                    None,
-                    {
-                        "method": "second_look_fast_movement",
-                        "outputs": f"Hold {target_object} -> Release (2nd look). Ans: {ans1}. Max overlap: {max_overlap:.2f}",
-                    },
-                )
 
-            # There is sufficient overlap, check if the object is actually held
+            # Check if the object is actually held
             ans2 = self._query_vlm(
                 cropped_frames_prev_loc,
                 CHECK_PREV_LOC_2_PROMPT,
@@ -444,7 +461,7 @@ class ContactStateNode(ABC):
                     [False],
                     None,
                     {
-                        "method": "second_look_fast_movement",
+                        "method": "second_look_for_release",
                         "outputs": f"Hold {target_object} -> Release (2nd look). Ans: {ans1} | {ans2}",
                     },
                 )
@@ -455,12 +472,12 @@ class ContactStateNode(ABC):
             [True],
             target_object,
             {
-                "method": "second_look_fast_movement",
+                "method": "second_look_for_release",
                 "outputs": f"Hold {target_object} -> Continue (2nd look). Ans: {ans1} | {ans2}",
             },
         )
 
-    def _state_dependent_prompt_with_motion_blur_guard(
+    def _state_dependent_prompt_with_second_look(
         self,
         pose_status: str,
         frames: np.ndarray,
@@ -477,25 +494,17 @@ class ContactStateNode(ABC):
             pose_status, cropped_frames
         )
 
-        # Motion blur occurs when we were previously in contact and the current
-        # contact says we released b/c the item is obscured by motion.
-        # We only proceed to motion blur guard if:
-        # 1) We were previously in contact
-        # 2) We are not currently in contact as determined by the VLM
-        # 3) We have a last known OK box to check against
-        # 4) The current pose status is FAST_MOVEMENT (if OK, we trust the VLM)
-        last_box = self.contact_ctx.last_ok_box
+        # Missed releases can occur. We check the location of the last chunk
+        # to see if the object is still there.
+        last_box = self.contact_ctx.last_box
         prev_contact = self.contact_ctx.contacts[-1]
-        motion_blur_guard_needed = (
+        second_check_needed = (
             (prev_contact == True)
-            and (contacts[-1] == False)
+            and (contacts[-1] == True)
             and (last_box is not None)
-            and (pose_status == HandStateStatus.FAST_MOVEMENT)
         )
-
-        if motion_blur_guard_needed:
-            # Guard against motion blur
-            return self._do_second_look_for_fast_movement(pose_status, frames, bboxes)
+        if second_check_needed:
+            return self._do_second_look_for_release(pose_status, frames)
         else:
             return pose_status, contacts, held_object, info
 
@@ -556,8 +565,8 @@ class FastMovementNode(ContactStateNode):
     ) -> Tuple[str, List[bool], Optional[str], Dict[str, Any]]:
         if pose_status == HandStateStatus.ABSTAIN:
             return self._repeat(pose_status)
-
-        return self._state_dependent_prompt_with_motion_blur_guard(
+        
+        return self._state_dependent_prompt_with_second_look(
             pose_status, frames, bboxes
         )
 
@@ -572,8 +581,8 @@ class OKNode(ContactStateNode):
     ) -> Tuple[str, List[bool], Optional[str], Dict[str, Any]]:
         if pose_status == HandStateStatus.ABSTAIN:
             return self._repeat(pose_status)
-
-        return self._state_dependent_prompt_with_motion_blur_guard(
+        
+        return self._state_dependent_prompt_with_second_look(
             pose_status, frames, bboxes
         )
 
@@ -614,9 +623,8 @@ class HandStateMachine:
         self.contact_ctx.contacts = contacts
         self.contact_ctx.held_object = obj
         if status == HandStateStatus.OK:
-            self.contact_ctx.last_ok_box = chunk.bboxes[-1]  # last frame's box
-        if contacts[-1] == True:
-            self.contact_ctx.last_contact_box = chunk.bboxes[-1]  # last frame's box
+            self.contact_ctx.last_ok_box = chunk.bboxes[0]  # last frame's box
+        self.contact_ctx.last_box = chunk.bboxes[0]  # last window's first frame box
 
         # IDLE
         idle_node = self._make_idle_node(vlm)
