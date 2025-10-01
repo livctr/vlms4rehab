@@ -103,11 +103,11 @@ def sr_primitives_doc_to_text(doc, lmms_eval_specific_kwargs=None):
             f"Focus on the patient's {which_hand}. Output the functional primitive "
             f"performed by the patient's {which_hand} as a single word.\n\n"
             f"Functional primitives: \n"
-            f"- IDLE: the hand is not moving and not holding anything\n"
-            f"- REACH: the hand is moving towards an object to grasp it\n"
-            f"- REPOSITION: the hand is moving but without meaning to grab an object\n"
-            f"- STABILIZE: the hand is holding something still\n"
-            f"- TRANSPORT: the hand is holding something and moving it\n"
+            f"- IDLE: hand is waiting\n"
+            f"- REACH: hand in motion with the purpose of contact with an object\n"
+            f"- REPOSITION: hand in motion with no contact at the endpoint\n"
+            f"- STABILIZE: hand steady to keep a target object still\n"
+            f"- TRANSPORT: hand in motion to convey an object in space\n"
             f"Only output one functional primitive.\n\n"
         )
     elif prompt == "single_motion_and_contact":
@@ -380,3 +380,6 @@ strokerehab_load_dataset_mild = partial(load_strokerehab_primitives_dataset, pat
 strokerehab_load_dataset_moderate = partial(load_strokerehab_primitives_dataset, patients=MODERATE_PATIENTS)
 strokerehab_load_dataset_severe = partial(load_strokerehab_primitives_dataset, patients=SEVERE_PATIENTS)
 strokerehab_load_primitives_data = partial(load_strokerehab_primitives_dataset, patients='S0001', activity='brushing,combing', reps='first')
+
+regex = r'^(C00020/C00020_glasses1_1.mkv|C00020/C00020_drinking1_1.mkv|C00020/C00020_combing1_1.mkv|C00020/C00020_face wash1_1.mkv|C00020/C00020_shelf right side1_1.mkv|C00020/C00020_deodrant1_1.mkv)$'
+strokerehab_load_dataset_healthy_subset = partial(load_strokerehab_primitives_dataset, video_regex=regex)
