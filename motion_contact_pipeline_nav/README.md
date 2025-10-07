@@ -20,7 +20,6 @@ organized_pipeline/
 |- enhanced_video_generator.py    # Diagnostic overlay video synthesis
 |- batch_process.py               # Metadata-driven batch execution
 |- utils.py                       # Label ingestion and handedness helpers
-|- vic/                           # Sequence-metric evaluation scripts (AER, Edit)
 |- cleaned_metadata.csv / activities_ground_truth.yaml
 ```
 
@@ -82,7 +81,7 @@ Per session we materialize:
 
 ## Inference (example)
 ```bash
-python main.py --skip_motion --motion_csv "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/naveen/final_pipeline/the_pipeline/strokerehab/strokerehab/organized_pipeline/C00020_glasses1_1_final/motion_analysis/C00020_glasses1_1/C00020_glasses1_1_vlm_motion.csv" --video_id "C00020_glasses1_1" --algo vlm_motion --vlm_motion_model OpenGVLab/InternVL3-38B --model OpenGVLab/InternVL3-38B --motion_window_s 0.25 --motion_overlap 0.1 --contact_mode framewise --contact_frame_fps 15 --contact_batch_size 8 --contact_median_kernel 3 --contact_gaussian_sigma 1.0 --contact_high_threshold 0.7 --contact_low_threshold 0.3 --contact_min_run_frames 3 --contact_gap_fill_frames 2 --clear_cache --low_memory --multi_gpu --output_dir "C00020_glasses1_1_final"
+python main.py --video_id "C00020_glasses1_1" --algo vlm_motion --vlm_motion_model OpenGVLab/InternVL3-38B --model OpenGVLab/InternVL3-38B --motion_window_s 0.25 --motion_overlap 0.1 --contact_mode framewise --contact_frame_fps 15 --contact_batch_size 8 --contact_median_kernel 3 --contact_gaussian_sigma 1.0 --contact_high_threshold 0.7 --contact_low_threshold 0.3 --contact_min_run_frames 3 --contact_gap_fill_frames 2 --clear_cache --low_memory --multi_gpu --output_dir "C00020_glasses1_1"
 ```
 
 Notes:
