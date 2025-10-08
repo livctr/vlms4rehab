@@ -34,6 +34,7 @@ conda activate cvfm4rehab_llava
 pip install -e .[metrics]
 pip install deepspeed
 cd LLaVA-NeXT ; pip install -e . ; cd ..
+pip install huggingface_hub[hf_xet]
 ################################# cvfm4rehab_llava END ##################################
 
 

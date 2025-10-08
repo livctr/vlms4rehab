@@ -1,38 +1,43 @@
 #!/bin/bash
-#SBATCH --job-name=
-#SBATCH --partition=
-#SBATCH --gres=
-#SBATCH --ntasks-per-node=
-#SBATCH --cpus-per-task=
-#SBATCH --mem-per-cpu=
-#SBATCH --time=
-#SBATCH --output=  # Save output in a file named with job ID
-#SBATCH --error=    # Save error logs
-#SBATCH --mail-type=BEGIN,END,FAIL         # Email on job end (optional)
-#SBATCH --mail-user=  # Your email (optional)
+#SBATCH --job-name=video_lmms_eval
+#SBATCH --partition=a100_short
+#SBATCH --gres=gpu:a100:1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem-per-cpu=16G
+#SBATCH --time=12:00:00
+#SBATCH --output=results/output_%j.txt  # Save output in a file named with job ID
+#SBATCH --error=results/output_%j.txt    # Save error logs
 
-# bash evaluate.sh --model all --task strokerehab_movements,strokerehab_primitives,strokerehab_describe
-# Change to 3 GPUs for next one
-# bash evaluate.sh --model internvl_2p5_78b --task strokerehab_movements,strokerehab_primitives
+# Change to 3 GPUs for the biggest model
 
 # Example usage:
-# - `bash evaluate.sh --model llava_ov_0p5b --task strokerehab_primitives`
-# - `bash evaluate.sh --model nvila_8b,nvila_15b --task strokerehab_movements`
-# - `bash evaluate.sh --model small --task strokerehab_movements,strokerehab_primitives --num_processes 4`  # runs all small models
-# - `bash evaluate.sh --model all --task strokerehab_movements,strokerehab_primitives`  # runs all models
+# - `bash evaluate.sh --model pose_vlm_pipeline --task strokerehab_primitives_7`
+`
 # Script credits: https://github.com/vision-x-nyu/thinking-in-space/blob/main/evaluate_all_in_one.sh
 
+
+source ~/.bashrc  # bashrc loads the following modules, uncomment if not
+# module purge
+# module load json-c/0.17
+# module load slurm/current
+# module load standard-tools/1.0
+# module load default-environment
+# module load gcc/11.2.0
+# module load ffmpeg/3.4.2
+cd "$(pwd)"
+conda init  # in case
+
 ############################################## ARGS ##############################################
-export HF_HOME="/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/victor/hf_home"
-export HF_TOKEN="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"
-wandb_entity="cvfm4rehab"  #"cvfm4rehab"  # leave empty if not using wandb
+export HF_HOME="FILL THIS IN!!!!!"
+export HF_TOKEN="FILL THIS IN!!!!!"
+wandb_entity = ""  # ok to leave empty
 ##################################################################################################
 
 
 num_processes_pre=1
 num_processes=1
-available_models="bot_8f,\
-bot_32f,\
+available_models="bot,\
 qwen2_5_vl_7b,\
 qwen2_5_vl_32b,\
 qwen2_5_vl_72b,\
@@ -41,30 +46,34 @@ llava_ov_7b,\
 llava_ov_72b,\
 llava_next_video_7b,\
 llava_next_video_72b,\
-internvl_2p5_2b,\
-internvl_2p5_8b,\
-internvl_2p5_38b,\
-internvl_2p5_78b,\
+internvl3p5_2b,\
+internvl3p5_8b,\
+internvl3p5_38b,\
+internvl3_78b,\
+internvl3p5_30b_a3b,\
+internvl3p5_241b_a28b,\
 longva_7b,\
 nvila_8b,\
 nvila_15b"
-available_small_models="bot_8f,\
-bot_32f,\
+available_small_models="bot,\
 qwen2_5_vl_7b,\
 llava_ov_0p5b,\
 llava_ov_7b,\
 llava_next_video_7b,\
-internvl_2p5_2b,\
+internvl3p5_2b,\
+internvl3p5_8b,\
 longva_7b,\
 nvila_8b"
-available_big_models="qwen2_5_vl_32b,\
-qwen2_5_vl_72b,\
+available_medium_models="qwen2_5_vl_32b,\
+internvl3p5_38b,\
+internvl3p5_30b_a3b,\
+nvila_15b"
+available_big_models="qwen2_5_vl_72b,\
 llava_ov_72b,\
 llava_next_video_72b,\
-internvl_2p5_8b,\
-internvl_2p5_38b,\
-nvila_15b,\
-internvl_2p5_78b"
+internvl3_78b,\
+internvl3p5_241b_a28b"
+
 launcher=accelerate
 log_path="./logs"
 
@@ -75,18 +84,6 @@ deactivate_all_conda_envs() {
     conda deactivate
   done
 }
-
-source ~/.bashrc  # bashrc loads the following modules, uncomment if not
-# module purge
-# module load json-c/0.17
-# module load slurm/current
-# module load standard-tools/1.0
-# module load default-environment
-# module load gcc/11.2.0
-# module load ffmpeg/3.4.2
-
-cd "$(pwd)"
-conda init  # in case
 
 
 if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
@@ -137,6 +134,9 @@ fi
 if [ "$models" = "small" ]; then
     IFS=',' read -r -a models <<<"$available_small_models"
 fi
+if [ "$models" = "medium" ]; then
+    IFS=',' read -r -a models <<<"$available_medium_models"
+fi
 
 if [ "$models" = "big" ]; then
     IFS=',' read -r -a models <<<"$available_big_models"
@@ -163,7 +163,7 @@ for model in "${models[@]}"; do
         "strokerehab_primitives"*)
             benchmark="$task"
             output_path="${log_path}/${task}"
-            model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
+            model_task_args=",sampling_strategy=dense,sampling_fps=15,overlap_frames_num=0"
             wandb_project="$task"
             ;;
         "strokerehab_ia1_3_30")
@@ -196,6 +196,24 @@ for model in "${models[@]}"; do
             model_task_args=",sampling_strategy=uniform"
             wandb_project="$task"
             ;;
+        "strokerehab_ia3_31_33")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
+            wandb_project="$task"
+            ;;
+        "strokerehab_ia4_3_30")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=uniform"
+            wandb_project="$task"
+            ;;
+        "strokerehab_ia4_31_33")
+            benchmark="$task"
+            output_path="${log_path}/${task}"
+            model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
+            wandb_project="$task"
+            ;;
         "strokerehab_describe")
             benchmark="$task"
             output_path="${log_path}/${task}"
@@ -209,102 +227,106 @@ for model in "${models[@]}"; do
         esac
 
         case "$model" in
-        "gemini_1p5_flash")
-            model_family="gemini_api"
-            model_args="model_version=gemini-1.5-flash,modality=video"
-            num_processes=1
-            ;;
-        "gemini_1p5_pro_002")
-            model_family="gemini_api"
-            model_args="model_version=gemini-1.5-pro,modality=video"
-            num_processes=1
-            ;;
-        "gemini_2p0_flash_exp")
-            model_family="gemini_api"
-            model_args="model_version=gemini-2.0-flash-exp,modality=video"
-            num_processes=1
-            ;;
-        "gpt_4o_2024_08_06_f16")
-            model_family="gpt4v"
-            model_args="model_version=gpt-4o-2024-08-06,modality=video,max_frames_num=16"
-            num_processes=1
-            ;;
         "qwen2_5_vl_7b")
             conda activate cvfm4rehab
             model_family="qwen2_5_vl"
-            model_args="pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=32"
+            model_args="pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
         "qwen2_5_vl_32b")
             conda activate cvfm4rehab
             model_family="qwen2_5_vl"
-            model_args="pretrained=Qwen/Qwen2.5-VL-32B-Instruct,max_frames_num=32"
+            model_args="pretrained=Qwen/Qwen2.5-VL-32B-Instruct,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
         "qwen2_5_vl_72b")
             conda activate cvfm4rehab
             model_family="qwen2_5_vl"
-            model_args="pretrained=Qwen/Qwen2.5-VL-72B-Instruct,max_frames_num=32"
+            model_args="pretrained=Qwen/Qwen2.5-VL-72B-Instruct,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
         "llava_ov_0p5b")
             conda activate cvfm4rehab_llava
             model_family="llava_onevision"
-            model_args="pretrained=lmms-lab/llava-onevision-qwen2-0.5b-ov,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=32"
+            model_args="pretrained=lmms-lab/llava-onevision-qwen2-0.5b-ov,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
         "llava_ov_7b")
             conda activate cvfm4rehab_llava
             model_family="llava_onevision"
-            model_args="pretrained=lmms-lab/llava-onevision-qwen2-7b-ov,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=32"
+            model_args="pretrained=lmms-lab/llava-onevision-qwen2-7b-ov,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
         "llava_ov_72b")
             conda activate cvfm4rehab_llava
             model_family="llava_onevision"
-            model_args="pretrained=lmms-lab/llava-onevision-qwen2-72b-ov-sft,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=32,device_map=auto"
+            model_args="pretrained=lmms-lab/llava-onevision-qwen2-72b-ov-sft,conv_template=qwen_1_5,model_name=llava_qwen,max_frames_num=8,device_map=auto"
             num_processes=1
             ;;
         "llava_next_video_7b")
             conda activate cvfm4rehab_llava
             model_family="llava_vid"
-            model_args="pretrained=lmms-lab/LLaVA-NeXT-Video-7B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=32"
+            model_args="pretrained=lmms-lab/LLaVA-NeXT-Video-7B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
         "llava_next_video_72b")
             conda activate cvfm4rehab_llava
             model_family="llava_vid"
-            model_args="pretrained=lmms-lab/LLaVA-NeXT-Video-72B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=32,device_map=auto"
+            model_args="pretrained=lmms-lab/LLaVA-NeXT-Video-72B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=8,device_map=auto"
             num_processes=1
             ;;
-        "internvl_2p5_2b")
+        "internvl3p5_1b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-2B,modality=video,max_frames_num=8"
+            model_args="pretrained=OpenGVLab/InternVL3_5-1B,modality=video,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
-        "internvl_2p5_8b")
+        "internvl3p5_2b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-8B,modality=video,max_frames_num=8"
+            model_args="pretrained=OpenGVLab/InternVL3_5-2B,modality=video,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
-        "internvl_2p5_38b")
+        "internvl3p5_4b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-38B,modality=video,max_frames_num=8,device_map=auto"
+            model_args="pretrained=OpenGVLab/InternVL3_5-4B,modality=video,max_frames_num=8"
+            num_processes=$num_processes_pre
+            ;;
+        "internvl3p5_8b")
+            conda activate cvfm4rehab_llava
+            model_family="internvl2"
+            model_args="pretrained=OpenGVLab/InternVL3_5-8B,modality=video,max_frames_num=8"
+            num_processes=$num_processes_pre
+            ;;
+        "internvl3p5_14b")
+            conda activate cvfm4rehab_llava
+            model_family="internvl2"
+            model_args="pretrained=OpenGVLab/InternVL3_5-14B,modality=video,max_frames_num=8"
+            num_processes=$num_processes_pre
+            ;;
+        "internvl3p5_38b")
+            conda activate cvfm4rehab_llava
+            model_family="internvl2"
+            model_args="pretrained=OpenGVLab/InternVL3_5-38B,modality=video,max_frames_num=8,device_map=auto"
             num_processes=1
             ;;
-        "internvl_2p5_78b")
+        "internvl3_78b")
             conda activate cvfm4rehab_llava
             model_family="internvl2"
-            model_args="pretrained=OpenGVLab/InternVL2_5-78B,modality=video,max_frames_num=8,device_map=auto"
+            model_args="pretrained=OpenGVLab/InternVL3-78B,modality=video,max_frames_num=8,device_map=auto"
+            num_processes=1
+            ;;
+        "internvl3p5_30b_a3b")
+            conda activate cvfm4rehab_llava
+            model_family="internvl2"
+            model_args="pretrained=OpenGVLab/InternVL3_5-30B-A3B,modality=video,max_frames_num=8,device_map=auto"
             num_processes=1
             ;;
         "longva_7b")
             conda activate cvfm4rehab_longva
             model_family="longva"
-            model_args="pretrained=lmms-lab/LongVA-7B,video_decode_backend=decord,conv_template=qwen_1_5,model_name=longva_qwen_7b,max_frames_num=32"
+            model_args="pretrained=lmms-lab/LongVA-7B,video_decode_backend=decord,conv_template=qwen_1_5,model_name=longva_qwen_7b,max_frames_num=8"
             num_processes=$num_processes_pre
             ;;
         "nvila_8b")
@@ -319,22 +341,16 @@ for model in "${models[@]}"; do
             model_args="pretrained=Efficient-Large-Model/NVILA-15B,video_decode_backend=decord,conv_template=auto,max_frames_num=8"
             num_processes=1
             ;;
-        "naveens_pipeline")
+        "pose_vlm_pipeline")
             conda activate cvfm4rehab
-            model_family="naveens_fp_pipeline"
+            model_family="pose_vlm_pipeline"
             model_args=""
             num_processes=1
             ;;
-        "bot_8f")
+        "bot")
             conda activate cvfm4rehab
             model_family="bot"
             model_args="video_decode_backend=decord,max_frames_num=8"
-            num_processes=1
-            ;;
-        "bot_32f")
-            conda activate cvfm4rehab
-            model_family="bot"
-            model_args="video_decode_backend=decord,max_frames_num=32"
             num_processes=1
             ;;
         *)

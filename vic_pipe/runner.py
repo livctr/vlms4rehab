@@ -1,18 +1,42 @@
 if __name__ == "__main__":
+    print("HI!")
+
     from tools.vqa.qwen2_5_vl import Qwen2_5_VL_VQA
+    print("Imported VLM.")
     import os
     import json
     from lmms_eval.tasks.strokerehab.utils_primitives import load_strokerehab_primitives_dataset
     from lmms_eval.tasks.strokerehab.utils_primitives import _get_primitives_score
+    print("Imported LMMS utils.")
     from data.utils_strokerehab import DataPaths, PrimitiveLabelUtils
-    from transformers.utils import logging
-    from vic_pipe.visualize import visualize
-    logging.set_verbosity_error()  # suppress warnings
-    import pandas as pd
+    print("Imported DataPaths.")
+    from loguru import logger as eval_logger
+    print("Imported logger.")
 
-    def get_paths(regex):
+    from tools.ultralytics_pose import Pose2DStream
+    print("Imported Pose2DStream.")
+    from tools.final_pipe_v1 import predict_with_state_machine
+    print("Imported predict_with_state_machine.")
+    import pandas as pd
+    import matplotlib.pyplot as plt
+
+    def get_paths(patients='C00020,C00023'):
         """Get paths for evaluation."""
-        paths = pd.DataFrame(load_strokerehab_primitives_dataset(video_regex=regex)['test'])[['path_v', 'path_l']]
+        C00020_videos = [
+            "C00020/C00020_combing1_2.mkv",
+            "C00020/C00020_shelf right side1_2.mkv",
+        ]
+        videos = C00020_videos
+        regex = "|".join([f"({v})" for v in videos])
+        regex = rf"^({regex})$"
+        ds = load_strokerehab_primitives_dataset(
+            video_regex=regex
+        )
+        # ds = load_strokerehab_primitives_dataset(
+        #     patients=patients,
+        #     reps='first',
+        # )
+        paths = pd.DataFrame(ds['test'])[['path_v', 'path_l']]
         path_ls = [os.path.join(DataPaths.RAW_LABEL_DIR, p) for p in paths['path_l'].tolist()]
         path_vs = [os.path.join(DataPaths.RAW_VIDEO_DIR, p) for p in paths['path_v'].tolist()]
         return path_ls, path_vs
@@ -50,7 +74,7 @@ if __name__ == "__main__":
             cnt.append(1)
         return dedup, cnt
 
-    def evaluate_prims(method_prims, path_ls, path_vs):
+    def evaluate_prims(dfs, path_ls, path_vs):
         n = 0
         sum_es = 0.0
         sum_aer = 0.0
@@ -60,12 +84,12 @@ if __name__ == "__main__":
 
         results = {}
 
-        for path_l, path_v in zip(path_ls, path_vs):
+        for df, path_l, path_v in zip(dfs, path_ls, path_vs):
             sample_id = os.path.basename(path_l).split('.')[0]
 
             print(f"Processing {sample_id}... ", end='')
 
-            prim, ref = method_prims(path_l, path_v)
+            prim, ref = df['predicted'].tolist(), df['reference'].tolist()
             s = get_primitives_score(prim, ref)  # expects keys: 'edit_score', 'action_error_rate'
 
 
@@ -107,97 +131,99 @@ if __name__ == "__main__":
         })
         return results
 
-    from tools.ultralytics_pose import Pose2DStream
-    from vic_pipe.stateful_contact_v2 import predict_with_state_machine
-
+    print("Starting model load...")
     vlm = Qwen2_5_VL_VQA(
         pretrained="Qwen/Qwen2.5-VL-32B-Instruct",
         device="cuda",
-        device_map="auto",
+        device_map=None,
     )
+    print("Qwen2_5_VL_VQA loaded.")
     streamer = Pose2DStream()
+    print("Pose model loaded.")
+    eval_logger.debug("Model loaded.")
 
-    def wrapper(path_l, path_v):
+    def preds_to_df(path_l, path_v):
         handedness = PrimitiveLabelUtils.get_handedness(path_l)
-        prims, prim_times, info = predict_with_state_machine(
-            path_v, handedness, vlm, streamer,
-            max_frames_num=4, sampling_fps=15
+        prims, times, infos = predict_with_state_machine(
+            path_v, handedness, vlm, streamer
         )
-        refs, refs_times = PrimitiveLabelUtils.convert_labels_to_prims_times(path_l)
+        for key in infos:
+            infos[key] = [str(i) for i in infos[key]]
+        df = pd.DataFrame({**infos, "predicted": prims, "times": times})
 
-        status = [str(s) for s in info['status']]
-        objs = [obj if obj else "none" for obj in info['objs']]
-        idles = [str(i) for i in info['idles']]
-        contacts = [str(c) for c in info['contacts']]
-        basic_contacts = [str(c) for c in info['basic_contacts']]
-
-        visualize(
-            path_v, prims, prim_times, refs, refs_times,
-            ("pose_status", status, prim_times),
-            ("held_objs", objs, prim_times),
-            ("idles", idles, prim_times),
-            ("state_contacts", contacts, prim_times),
-            ("snapshot_contacts", basic_contacts, prim_times),
-            bboxes=info['bboxes'], wrist_kps=info['kps_wrist'], elbow_kps=info['kps_elbow'], hand_kps=info['kps_hand'],
-            overwrite=False
+        refs, refs_times = PrimitiveLabelUtils.convert_labels_to_prims_times(path_l, duplicate_last_prim=True)
+        df_refs = pd.DataFrame({"times": refs_times, "reference": refs})
+        out = pd.merge_asof(
+            df,
+            df_refs,
+            on="times",
+            direction="backward"
         )
+        return out
 
-        return prims, refs
+
+    def evaluate_prims_individual(path_l, path_v):
+        df = preds_to_df(path_l, path_v)
+        return df
+
+
+    def plot_factor_bars(df: pd.DataFrame, time_col: str, factor_cols: list[str]):
+        # Collect all unique non-null strings
+        all_vals = pd.unique(df[factor_cols].astype(str).values.ravel())
+        colors = {v: plt.cm.tab20(i % 20) for i, v in enumerate(all_vals)}
+
+        fig, ax = plt.subplots(figsize=(12, 1 + len(factor_cols) / 2.))
+        for j, col in enumerate(factor_cols):
+            for _, row in df.iterrows():
+                val = str(row[col])
+                ax.barh(j, 1, left=row[time_col], color=colors[val])
+        ax.set_yticks(range(len(factor_cols)))
+        ax.set_yticklabels(factor_cols)
+        ax.set_xlabel("Time")
+        ax.legend([plt.Rectangle((0,0),1,1,color=colors[v]) for v in all_vals],
+                all_vals, title="Values", bbox_to_anchor=(1.05,1), loc="upper left")
+        plt.tight_layout()
+        video = df['video'].iloc[0] if 'video' in df else 'factors'
+        plt.savefig(f"viz/factors_plot_{video}.png")
+
+
+    path_ls, path_vs = get_paths(patients='C00020,C00023')
+    # path_ls, path_vs = get_paths()
+    print(f"Evaluating {len(path_ls)} videos...")
+    print("Starting!")
+
+    dfs = []
+    for path_l, path_v in zip(path_ls, path_vs):
+        print(f"Processing {path_l}...")
+        eval_logger.debug(f"Processing {path_l}...")
+        print(f"Processing {path_v}...")
+        df = preds_to_df(path_l, path_v)
+        df['video'] = os.path.basename(path_l).split('.')[0]
+        dfs.append(df)
+    df = pd.concat(dfs, ignore_index=True)
+    
+    final_results = evaluate_prims(dfs, path_ls, path_vs)
 
     print("=" * 80)
-    print(f"Evaluating stateful...\t\t AER \t\t ES")
-
-    # Test on: C00020, S0005, S0001, S00021
-    # Activities: glasses, drinking, combing, face wash, shelf right side, deodrant
-
-    # C00020: 
-    # C00020_videos = [
-    #     "C00020/C00020_glasses1_1.mkv",
-    #     "C00020/C00020_drinking1_1.mkv",
-    #     "C00020/C00020_drinking1_2.mkv",
-    #     "C00020/C00020_combing1_1.mkv",
-    #     "C00020/C00020_combing1_2.mkv",
-    #     "C00020/C00020_face wash1_1.mkv",
-    #     "C00020/C00020_shelf right side1_1.mkv",
-    #     "C00020/C00020_shelf right side1_2.mkv",
-    #     "C00020/C00020_deodrant1_1.mkv",
-    #     "C00020/C00020_deodrant1_2.mkv",
-    #     "C00020/C00020_feeding1_1.mkv",
-    #     "C00020/C00020_feeding1_2.mkv"
-    # ]
-
-    # S0005_videos = [
-    #     "S0005/S0005_shelf left side1_2.avi",
-    #     "S0005/S0005_combing2_2.avi"
-    # ]
-
-    # S0001_videos = [
-    #     "S0001/S0001_shelf right side1_1.avi",
-    #     "S0001/S0001_combing1_2.avi"
-    # ]
-
-    S00021_videos = [
-        "S00021/S00021_RTT left side1_1.avi",
-        # "S00021/S00021_combing1_1.avi"
-    ]
-
-    # videos = C00020_videos + S0005_videos + S0001_videos + S00021_videos
-    videos = S00021_videos
-
-    # regex = r'^(C00020/C00020_.*1_[12].mkv)$'
-    # regex = r'^(C00020/C00020_glasses1_1.mkv|C00020/C00020_drinking1_1.mkv|C00020/C00020_combing1_1.mkv|C00020/C00020_face wash1_1.mkv|C00020/C00020_shelf right side1_1.mkv|C00020/C00020_deodrant1_1.mkv)$'
-    regex = "|".join([f"({v})" for v in videos])
-    regex = rf"^({regex})$"
-
-    # regex = r'^(C00020/C00020_combing1_1.mkv)$'  # for quick debugging
-    path_ls, path_vs = get_paths(regex)
-    print(len(path_ls), "samples to evaluate.")
-    # print(path_vs)
-    results = evaluate_prims(wrapper, path_ls, path_vs)
-    print("=" * 80)
-    print(f"ES: {results['aggregate']['edit_score']:.4f}, "
-            f"AER: {results['aggregate']['action_error_rate']:.4f}")
+    print(f"ES: {final_results['aggregate']['edit_score']:.4f}, "
+            f"AER: {final_results['aggregate']['action_error_rate']:.4f}")
     print("=" * 80)
     os.makedirs("results", exist_ok=True)
-    with open(f"results/eval_prims_stateful.json", "w", encoding="utf-8") as f:
-        json.dump(_to_jsonable(results), f, indent=2, ensure_ascii=False, sort_keys=True)
+    with open(f"results/eval_prims_individual.json", "w", encoding="utf-8") as f:
+        json.dump(_to_jsonable(final_results), f, indent=2, ensure_ascii=False, sort_keys=True)
+
+    scores = []
+    for video in df['video'].unique():
+        score = get_primitives_score(
+            df[df['video'] == video]['predicted'].tolist(),
+            df[df['video'] == video]['reference'].tolist()
+        )
+        scores.append((video, score['edit_score'], score['action_error_rate']))
+    scores_df = pd.DataFrame(scores, columns=['video', 'edit_score', 'action_error_rate'])
+    scores_df.to_csv("results/eval_prims_individual.csv", index=False)
+
+    factor_cols = [
+        'predicted', 'reference', 'held_object', 'status'
+    ]
+    for video in df['video'].unique():
+        plot_factor_bars(df[df['video'] == video], time_col='times', factor_cols=factor_cols)

@@ -84,6 +84,7 @@ import numpy as np
 
 from lmms_eval.models.model_utils.load_video import load_long_video_decord
 from tools.ultralytics_pose import Pose2DStream
+from loguru import logger as eval_logger
 
 ####################################### DATA CLASSES #######################################
 
@@ -940,7 +941,7 @@ def predict_with_state_machine(
         prim, info = machine.step(chunk)
 
         num_frames = len(frames)
-        times.extend(np.linspace(start_t, end_t, num_frames).tolist())
+        times.extend(np.linspace(start_t, end_t, num_frames, endpoint=False).tolist())
         info["status"] = [pose_status] * num_frames
         info["prim"] = [prim] * num_frames
         info["kps_wrist"] = [kp_wrist[i] for i in range(num_frames)]
@@ -955,8 +956,8 @@ def predict_with_state_machine(
             else:
                 infos[key].extend([info[key]] * num_frames)
 
-        print(
-            f"{start_t:.2f}-{end_t:.2f}s | {pose_status} | {prim}"
+        eval_logger.info(
+            f"{start_t:.2f}-{end_t:.2f}s | {pose_status} | {prim} | {infos['held_object']} | {infos['idle_info']} | {infos['held_obj_info']} | {infos['interaction_info']}"
         )
 
     unprocessed_prims = infos["prim"]

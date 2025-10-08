@@ -30,6 +30,7 @@ DEFAULT_GEN_KWARGS = dict(
     num_beams=1,
     max_new_tokens=1024,
     do_sample=False,
+    pad_token_id=151643
 )
 
 
@@ -201,7 +202,6 @@ class InternVL2(lmms):
         device: str = "cuda:0",
         device_map: str = "cuda:0",
         batch_size: str = "1",
-        num_frame: int = 30,
         num_layers=None,
         max_frames_num: int = 32,
         sampling_strategy: str = "uniform",
@@ -212,7 +212,6 @@ class InternVL2(lmms):
         super().__init__()
 
         self.path = pretrained
-        self.num_frame = num_frame
 
         batch_size = int(batch_size)
         assert batch_size == 1, f"Batch size should be 1 for InternVL2, but got {batch_size}."

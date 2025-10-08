@@ -193,11 +193,11 @@ class Bot(lmms):
                 video_window_outputs = []
 
                 for context in context_with_multiple_questions_list:
-                    sim_response = "NO"
+                    sim_response = "Idle"
                     video_window_outputs.append(sim_response)
                 # Join the outputs for this video window
                 video_window_outputs = " <SEP> ".join(video_window_outputs)
-                import pdb ; pdb.set_trace()
+                # import pdb ; pdb.set_trace()
                 outputs.append((video_window_outputs, start_time_s, end_time_s))
 
             res.append(outputs)

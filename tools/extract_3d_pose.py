@@ -90,7 +90,7 @@ def extract_first_bbox_and_label(
 
 
 LOCATE_PATIENT_PROMPT = (
-    "Locate the person most likely to be the patient in the image as a bounding box in JSON."
+    "Locate the person performing the activity as a bounding box in JSON."
 )
 
 def extract_2d_pose(video_path: str, vqa_model: Qwen2_5_VL_VQA, stream_2d: Pose2DStream):
@@ -308,7 +308,7 @@ def run_3d_pose_extraction(
 
     kpts2d, fps, width, height = extract_2d_pose(video_path, vqa_model, stream_2d)
     kpts2d = turn_into_h36m(kpts2d)
-    kpts2d = smooth_pose2d_kalman(kpts2d, fps=fps)
+    # kpts2d = smooth_pose2d_kalman(kpts2d, fps=fps)
 
     T = kpts2d.shape[0]
     # times = np.arange(T, dtype=np.float32) / fps
@@ -562,7 +562,8 @@ if __name__ == "__main__":
     HRNET_CFG = "tools/hrnet/experiments/w48_384x288_adam_lr1e-3.yaml"
     HRNET_WEIGHTS = "tools/hrnet/checkpoint/pose_hrnet_w48_384x288.pth"
 
-    ex_paths = load_strokerehab_primitives_dataset(patients='C00020', reps='first')['test']['path_v']
+    video_regex = r'^(C00020/C00020_glasses1_1.mkv|C00020/C00020_drinking1_1.mkv|C00020/C00020_combing1_1.mkv|C00020/C00020_face wash1_1.mkv|C00020/C00020_shelf right side1_1.mkv|C00020/C00020_deodrant1_1.mkv)$'
+    ex_paths = load_strokerehab_primitives_dataset(video_regex=video_regex)['test']['path_v']
 
     prims_input_dir = DataPaths.RAW_VIDEO_DIR
     prims_paths = load_strokerehab_primitives_dataset(filter_for_subsampled_testset=True)['test']['path_v']
@@ -572,7 +573,7 @@ if __name__ == "__main__":
     ia_paths = load_strokerehab_ia_dataset(metadata_path=DataPaths.IA_VIDEO_METADATA_PATH3)['test']['path_v']
     ia_output_dir = DataPaths.FM_POSE_DIR
 
-    vqa_model = Qwen2_5_VL_VQA(pretrained="Qwen/Qwen2.5-VL-7B-Instruct", device="cuda:0", device_map="auto")
+    vqa_model = Qwen2_5_VL_VQA(pretrained="Qwen/Qwen2.5-VL-32B-Instruct", device="cuda:0", device_map="auto")
     stream_2d = Pose2DStream(num_person=1)
 
     motionagformer_model, motionagformer_args = get_motionagformer_model_and_args()

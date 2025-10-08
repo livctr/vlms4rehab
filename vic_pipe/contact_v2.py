@@ -188,8 +188,6 @@ class HandCropper:
         """
         self.kp_conf_thresh = float(kp_conf_thresh)
         self.fast_movement_thresh = int(fast_movement_thresh)
-        self.side = 224
-        self.half = self.side // 2
         self._last_center: Optional[Tuple[float, float]] = None
         self._detected = False
         assert interpolation in ("middle", "linear", "individual", "mixed")
@@ -197,11 +195,6 @@ class HandCropper:
 
     def clear(self) -> None:
         pass
-
-    def _clamp_center(self, cx: float, cy: float, W: int, H: int) -> Tuple[int, int]:
-        cx = max(self.half, min(W - self.half, cx))
-        cy = max(self.half, min(H - self.half, cy))
-        return int(round(cx)), int(round(cy))
 
     @staticmethod
     def _bbox_contains_points(
@@ -214,11 +207,13 @@ class HandCropper:
                 return False
         return True
 
+    @staticmethod
     def _bbox_at_center_with_side(
-        self, center: Tuple[float, float], side: int, W: int, H: int
+        center: Tuple[float, float], side: int, W: int, H: int
     ) -> Tuple[int, int, int, int]:
         half = side // 2
-        cx_i, cy_i = self._clamp_center(center[0], center[1], W, H)
+        cx_i = int(round(max(half, min(W - half, center[0]))))
+        cy_i = int(round(max(half, min(H - half, center[1]))))
         x1, y1 = int(cx_i - half), int(cy_i - half)
         x2, y2 = int(cx_i + half), int(cy_i + half)
         # clamp to image bounds
@@ -229,7 +224,8 @@ class HandCropper:
     def process_frames(self,
                      frames: np.ndarray,
                      *,
-                     hand_kps: List[np.ndarray]
+                     hand_kps: List[np.ndarray],
+                     bbox_side: int = 224
     ):
         """
         Given the list of hand keypoints for a list of frames, produce crops
@@ -257,7 +253,7 @@ class HandCropper:
             if use_middle:
                 crop_box = self._bbox_at_center_with_side(
                     ((first[0] + last[0]) / 2.0, (first[1] + last[1]) / 2.0),
-                    side=self.side, W=W, H=H
+                    side=bbox_side, W=W, H=H
                 )
                 return ("FAST MOVEMENT" if fast_mvt else "OK", [crop_box for _ in hand_kps])
             else:
@@ -267,7 +263,7 @@ class HandCropper:
                             (1 - alpha) * first[0] + alpha * last[0],
                             (1 - alpha) * first[1] + alpha * last[1]
                         ),
-                        side=self.side, W=W, H=H
+                        side=bbox_side, W=W, H=H
                     )
                     for alpha in (i / (T - 1) if T > 1 else 0.0 for i in range(T))
                 ]
@@ -284,7 +280,7 @@ class HandCropper:
             crop_boxes = [
                 self._bbox_at_center_with_side(
                     (kp[0], kp[1]),
-                    side=self.side, W=W, H=H
+                    side=bbox_side, W=W, H=H
                 )
                 for kp in hand_kps
             ]
