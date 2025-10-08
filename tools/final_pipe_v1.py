@@ -957,7 +957,7 @@ def predict_with_state_machine(
                 infos[key].extend([info[key]] * num_frames)
 
         eval_logger.info(
-            f"{start_t:.2f}-{end_t:.2f}s | {pose_status} | {prim} | {infos['held_object']} | {infos['idle_info']} | {infos['held_obj_info']} | {infos['interaction_info']}"
+            f"{start_t:.2f}-{end_t:.2f}s | {pose_status} | {prim} | {info['held_object']} | {info['idle_info']} | {info['held_obj_info']} | {info['interaction_info']}"
         )
 
     unprocessed_prims = infos["prim"]

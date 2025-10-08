@@ -14,6 +14,9 @@ test_videos_out/
 plots/
 to_delete*
 data/ia/temporal_annotations_temp/
+vic_pipe/
+motion_contact_pipeline_nav/
+
 
 .vscode
 
