@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# --- NEW imports (top of file) ---
+import hashlib
+import pickle
+from pathlib import Path
+
 import copy
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
@@ -20,6 +25,26 @@ class Pose2DStream:
     - Supports "slots" to pin specific people via a point/bbox prompt.
     """
 
+    KEYPOINT_TO_IDX = {
+        "nose": 0,
+        "left_eye": 1,
+        "right_eye": 2,
+        "left_ear": 3,
+        "right_ear": 4,
+        "left_shoulder": 5,
+        "right_shoulder": 6,
+        "left_elbow": 7,
+        "right_elbow": 8,
+        "left_wrist": 9,
+        "right_wrist": 10,
+        "left_hip": 11,
+        "right_hip": 12,
+        "left_knee": 13,
+        "right_knee": 14,
+        "left_ankle": 15,
+        "right_ankle": 16,
+    }
+
     def __init__(
         self,
         model_name: str = "yolo11l-pose.pt",
@@ -29,6 +54,8 @@ class Pose2DStream:
         pose_conf: float = 0.25,              # Ultralytics conf threshold
         iou_match_thresh: float = 0.3,        # IoU threshold to match slot->pose det
         sort_include_score: bool = True,      # pass score column to SORT output
+        use_cache: bool = False,
+        cache_dir: str = ".pose_cache",
     ):
         self.device = torch.device(device) if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.pose_model = YOLO(model_name)
@@ -39,18 +66,77 @@ class Pose2DStream:
         self.iou_match_thresh = float(iou_match_thresh)
         self.sort_include_score = bool(sort_include_score)
 
+        # --- NEW: cache setup ---
+        self.use_cache = bool(use_cache)
+        self.cache_dir = Path(cache_dir)
+        if self.use_cache:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self._det_cache_mem: dict[str, dict] = {}
+
         # Stream state
         self._frames: List[np.ndarray] = []
         self._last_tracks: Optional[np.ndarray] = None
 
         # Slots for binding tracked people
-        self._slots: List[Dict] = [
-            {"track_id": None, "label": None, "anchor": None, "last_bbox": None}
+        self._slots = [
+            {"track_id": None, "label": None, "anchor": None, "anchor_bbox": None, "last_bbox": None}
             for _ in range(self.num_person)
         ]
         self._pending_prompts: List[Tuple[Tuple[float, float], Optional[str]]] = []
 
     # -------------------- Helpers --------------------
+
+    def _hash_frame(self, frame: np.ndarray) -> str:
+        """
+        Hash the frame content + key inference settings so cache is safe
+        across different models and thresholds.
+        """
+        # Ensure C-contiguous to keep .tobytes() stable
+        f = np.ascontiguousarray(frame)
+        h = hashlib.sha256()
+        h.update(f.shape.__repr__().encode("utf-8"))
+        h.update(f.dtype.str.encode("utf-8"))
+        h.update(f.tobytes())
+        # Include knobs that affect detections
+        h.update(str(self.pose_conf).encode("utf-8"))
+        return h.hexdigest()
+
+    def _det_cache_path(self, key: str) -> Path:
+        return self.cache_dir / f"{key}.pkl"
+
+    def _load_dets_from_cache(self, key: str) -> Optional[dict]:
+        if not self.use_cache:
+            return None
+        if key in self._det_cache_mem:
+            return self._det_cache_mem[key]
+        p = self._det_cache_path(key)
+        if p.exists():
+            try:
+                with open(p, "rb") as f:
+                    data = pickle.load(f)
+                # light sanity check
+                if isinstance(data, dict) and "det_boxes" in data and "kp_xy" in data:
+                    self._det_cache_mem[key] = data
+                    return data
+            except Exception:
+                pass
+        return None
+
+    def _save_dets_to_cache(self, key: str, dets: dict) -> None:
+        if not self.use_cache:
+            return
+        self._det_cache_mem[key] = dets
+        try:
+            with open(self._det_cache_path(key), "wb") as f:
+                pickle.dump(dets, f, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            # best-effort; ignore disk write errors
+            pass
+
+    def clear_cache(self) -> None:
+        """Clear in-memory detection cache (does not delete disk files)."""
+        self._det_cache_mem.clear()
+
 
     @staticmethod
     def _prepare_dets_for_sort(boxes_xyxy: np.ndarray, scores: Optional[np.ndarray]) -> np.ndarray:
@@ -91,30 +177,48 @@ class Pose2DStream:
 
     # -------------------- Slot / Prompt API --------------------
 
+    @staticmethod
+    def _bbox_from_kps(kp_xy_single: np.ndarray) -> Optional[Tuple[float, float, float, float]]:
+        """
+        kp_xy_single: (K,2) for one detection
+        Returns (x1,y1,x2,y2) or None if all are NaN/invalid.
+        """
+        if kp_xy_single is None or kp_xy_single.size == 0:
+            return None
+        xy = kp_xy_single.astype(np.float32)
+        valid = np.isfinite(xy).all(axis=1)
+        if not np.any(valid):
+            return None
+        vxy = xy[valid]
+        x1, y1 = float(np.min(vxy[:, 0])), float(np.min(vxy[:, 1]))
+        x2, y2 = float(np.max(vxy[:, 0])), float(np.max(vxy[:, 1]))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        return (x1, y1, x2, y2)
+
     def add_new_person_to_track(
         self,
-        point: Optional[Tuple[float, float]] = None,
-        bbox: Optional[Tuple[float, float, float, float]] = None,
+        *,
+        bbox: Tuple[float, float, float, float],
         label: Optional[str] = None,
     ) -> int:
-        if (point is None) == (bbox is None):
-            raise ValueError("Provide exactly one of: point=(x,y) OR bbox=(x1,y1,x2,y2).")
+        """
+        Bind a new person slot using an anchor bounding box (x1,y1,x2,y2).
+        Later, poses will be matched by IoU(anchor_bbox, pose_bbox_from_keypoints).
+        """
+        if bbox is None or len(bbox) != 4:
+            raise ValueError("Provide bbox=(x1,y1,x2,y2).")
 
-        center = point if point is not None else ((bbox[0] + bbox[2]) * 0.5, (bbox[1] + bbox[3]) * 0.5)
+        free_slots = [i for i, s in enumerate(self._slots) if s.get("track_id") is None and s.get("anchor_bbox") is None]
 
-        free_slots = [i for i, s in enumerate(self._slots) if s["track_id"] is None and s["anchor"] is None]
         if not free_slots:
             raise ValueError("All slots are bound. Increase num_person or clear a slot.")
 
         slot_idx = free_slots[0]
-        if self._last_tracks is not None and self._last_tracks.size:
-            track_id, track_bbox = self._nearest_track(center, self._last_tracks)
-            self._slots[slot_idx].update(
-                {"track_id": int(track_id), "label": label, "anchor": center, "last_bbox": track_bbox}
-            )
-        else:
-            self._slots[slot_idx].update({"track_id": None, "label": label, "anchor": center, "last_bbox": None})
-            self._pending_prompts.append((center, label))
+        # Store the anchor bbox; we do NOT need _last_tracks for this new policy.
+        self._slots[slot_idx].update(
+            {"track_id": None, "label": label, "anchor": None, "anchor_bbox": tuple(map(float, bbox)), "last_bbox": None}
+        )
         return slot_idx
 
     def _bind_pending_prompts(self, tracks: np.ndarray) -> None:
@@ -134,36 +238,63 @@ class Pose2DStream:
     # -------------------- Core --------------------
 
     @torch.no_grad()
-    def process_frame(self, frame_bgr: np.ndarray) -> np.ndarray:
+    def process_frame(self, frame_rgb: np.ndarray) -> np.ndarray:
         """
         Returns array of shape (1, num_person, 17, 3): [x, y, conf].
         """
         K_TARGET = 17
         out = np.full((1, self.num_person, K_TARGET, 3), np.nan, dtype=np.float32)
 
-        # 1) Ultralytics Pose on full frame
-        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        device_str = str(self.device) if self.device.type == "cuda" else "cpu"
-        results = self.pose_model.predict(frame_rgb, conf=self.pose_conf, verbose=False, device=device_str)
-        if not results:
-            self._frames.append(out)
-            return out
 
-        res = results[0]
-        if res.boxes is None or res.keypoints is None or res.boxes.xyxy is None:
-            self._frames.append(out)
-            return out
+        # 1) Ultralytics Pose on full frame (CACHED)
+        # NOTE: even though the variable is named frame_rgb, if you are passing
+        # cv2 frames, they are typically BGR. That's fine for caching because
+        # hashing is on raw bytes; just be consistent across calls.
+        det_boxes = det_scores = kp_xy = kp_conf = None
 
-        # Extract detections
-        det_boxes = res.boxes.xyxy.cpu().numpy().astype(np.float32)              # (N,4)
-        det_scores = (res.boxes.conf.cpu().numpy().astype(np.float32)
-                      if getattr(res.boxes, "conf", None) is not None
-                      else np.ones((det_boxes.shape[0],), dtype=np.float32))     # (N,)
+        key = self._hash_frame(frame_rgb)
+        cached = self._load_dets_from_cache(key)
+        if cached is not None:
+            det_boxes = cached["det_boxes"]
+            det_scores = cached["det_scores"]
+            kp_xy = cached["kp_xy"]
+            kp_conf = cached["kp_conf"]
+        else:
+            device_str = str(self.device) if self.device.type == "cuda" else "cpu"
+            results = self.pose_model.predict(frame_rgb, conf=self.pose_conf, verbose=False, device=device_str)
+            if not results:
+                self._frames.append(out)
+                return out
 
-        kp_xy = res.keypoints.xy.cpu().numpy().astype(np.float32)               # (N,K,2)
-        kp_conf = (res.keypoints.conf.cpu().numpy().astype(np.float32)
-                   if getattr(res.keypoints, "conf", None) is not None
-                   else np.ones((kp_xy.shape[0], kp_xy.shape[1]), dtype=np.float32))  # (N,K)
+            res = results[0]
+            if res.boxes is None or res.keypoints is None or res.boxes.xyxy is None:
+                self._frames.append(out)
+                return out
+
+            # Extract detections
+            det_boxes = res.boxes.xyxy.cpu().numpy().astype(np.float32)  # (N,4)
+            det_scores = (
+                res.boxes.conf.cpu().numpy().astype(np.float32)
+                if getattr(res.boxes, "conf", None) is not None
+                else np.ones((det_boxes.shape[0],), dtype=np.float32)
+            )
+            kp_xy = res.keypoints.xy.cpu().numpy().astype(np.float32)  # (N,K,2)
+            kp_conf = (
+                res.keypoints.conf.cpu().numpy().astype(np.float32)
+                if getattr(res.keypoints, "conf", None) is not None
+                else np.ones((kp_xy.shape[0], kp_xy.shape[1]), dtype=np.float32)
+            )
+
+            # Save to cache
+            self._save_dets_to_cache(
+                key,
+                {
+                    "det_boxes": det_boxes,
+                    "det_scores": det_scores,
+                    "kp_xy": kp_xy,
+                    "kp_conf": kp_conf,
+                },
+            )
 
         # 2) Track with SORT using detection boxes
         dets_for_sort = self._prepare_dets_for_sort(det_boxes, det_scores)       # (N,5)
@@ -176,6 +307,7 @@ class Pose2DStream:
         # 3) Optionally bind queued prompts to current tracks
         self._bind_pending_prompts(tracks)
 
+        # (rest of your method unchanged) ...
         # Build dictionary: track_id -> bbox
         last_col = tracks.shape[1] - 1
         id_to_box = {int(t[last_col]): tuple(map(float, t[:4])) for t in tracks}
@@ -226,20 +358,83 @@ class Pose2DStream:
                 c_pad[:, :K_model] = kp_conf
                 kp_xy, kp_conf = xy_pad, c_pad
 
+        # Build per-pose keypoint-derived bboxes
+        pose_boxes: List[Optional[Tuple[float, float, float, float]]] = [
+            self._bbox_from_kps(kp_xy[j]) for j in range(kp_xy.shape[0])
+        ]
+
         # 4) Match each selected box to best pose det via IoU
         used_pose_idx: set[int] = set()
-        for i, sel_box in enumerate(selected_boxes):
+
+        # --- Priority 1: Fill slots that have an anchor_bbox via IoU(anchor_bbox, pose_bbox) ---
+        for i, s in enumerate(self._slots[:self.num_person]):
+            if s.get("anchor_bbox") is None:
+                continue
+            anchor_box = s["anchor_bbox"]
             best_idx, best_iou = -1, 0.0
-            for j, det_box in enumerate(det_boxes):
-                if j in used_pose_idx:
+            for j, pbox in enumerate(pose_boxes):
+                if j in used_pose_idx or pbox is None:
                     continue
-                iou = self._iou(sel_box, tuple(map(float, det_box)))
+                iou = self._iou(anchor_box, pbox)
+                if iou > best_iou:
+                    best_iou, best_idx = iou, j
+
+            if best_idx >= 0 and best_iou >= self.iou_match_thresh:
+                out[0, i, :, :2] = kp_xy[best_idx]
+                out[0, i, :, 2]  = kp_conf[best_idx]
+                used_pose_idx.add(best_idx)
+                # keep last_bbox for visualization; prefer the keypoint box for stability here
+                s["last_bbox"] = pose_boxes[best_idx]
+
+        # --- Priority 2: Fill any remaining slots using previous SORT-driven selection as fallback ---
+        # Build dictionary: track_id -> bbox
+        last_col = tracks.shape[1] - 1
+        id_to_box = {int(t[last_col]): tuple(map(float, t[:4])) for t in tracks} if tracks is not None and tracks.size else {}
+        used_ids: set[int] = set()
+        selected_boxes: List[Tuple[float, float, float, float]] = []
+
+        # Reuse previously bound slots (track-based) if they weren't filled via anchor bbox
+        for i, s in enumerate(self._slots[:self.num_person]):
+            if not np.isnan(out[0, i, :, 2]).all():  # already filled by anchor bbox stage
+                continue
+            box = None
+            if s["track_id"] is not None and s["track_id"] in id_to_box:
+                box = id_to_box[s["track_id"]]
+                s["last_bbox"] = box
+                used_ids.add(s["track_id"])
+            elif s["last_bbox"] is not None:
+                box = s["last_bbox"]
+            if box is not None:
+                selected_boxes.append(tuple(float(v) for v in box))
+
+        # Fill remaining with any other tracks
+        if len(selected_boxes) < self.num_person:
+            for tid, box in id_to_box.items():
+                if tid in used_ids:
+                    continue
+                selected_boxes.append(tuple(float(v) for v in box))
+                used_ids.add(tid)
+                if len(selected_boxes) >= self.num_person:
+                    break
+
+        # Now map those selected (track) boxes to any remaining unused poses via IoU
+        pose_needed_slots = [i for i in range(self.num_person) if np.isnan(out[0, i, :, 2]).all()]
+        for i_rel, sel_box in enumerate(selected_boxes[:len(pose_needed_slots)]):
+            slot_i = pose_needed_slots[i_rel]
+            best_idx, best_iou = -1, 0.0
+            for j, pbox in enumerate(pose_boxes):
+                if j in used_pose_idx or pbox is None:
+                    continue
+                iou = self._iou(sel_box, pbox)
                 if iou > best_iou:
                     best_iou, best_idx = iou, j
             if best_idx >= 0 and best_iou >= self.iou_match_thresh:
-                out[0, i, :, :2] = kp_xy[best_idx]
-                out[0, i, :, 2] = kp_conf[best_idx]
+                out[0, slot_i, :, :2] = kp_xy[best_idx]
+                out[0, slot_i, :, 2]  = kp_conf[best_idx]
                 used_pose_idx.add(best_idx)
+                # track a last_bbox for downstream visualization
+                self._slots[slot_i]["last_bbox"] = sel_box
+
 
         # Update slot last bboxes for displayed slots
         for i, s in enumerate(self._slots[:m_eff]):
@@ -286,7 +481,9 @@ class Pose2DStream:
         return [s["label"] for s in self._slots]
 
     def clear_slot(self, slot_idx: int) -> None:
-        self._slots[slot_idx] = {"track_id": None, "label": None, "anchor": None, "last_bbox": None}
+        self._slots[slot_idx] = {
+            "track_id": None, "label": None, "anchor": None, "anchor_bbox": None, "last_bbox": None
+        }
 
     def slots_info(self) -> List[Dict]:
         return copy.deepcopy(self._slots)
@@ -303,10 +500,13 @@ class Pose2DStream:
             for s in self._slots:
                 s["track_id"] = None
                 s["anchor"] = None
+                s["anchor_bbox"] = None
                 s["last_bbox"] = None
         else:
             for i in range(len(self._slots)):
-                self._slots[i] = {"track_id": None, "label": None, "anchor": None, "last_bbox": None}
+                self._slots[i] = {
+                    "track_id": None, "label": None, "anchor": None, "anchor_bbox": None, "last_bbox": None
+                }
 
         if not keep_pending_prompts:
             self._pending_prompts.clear()

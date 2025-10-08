@@ -2,8 +2,6 @@ import pandas as pd
 from typing import Optional, Tuple, List
 import os
 
-import pandas as pd
-
 
 HEALTHY_PATIENTS = (
     "C00011,C00012,C00015,C00019,C00020,C00022,C00023,C00024,C00025,C00026,"

@@ -59,6 +59,8 @@ TIMING_THRESHOLDS = {97: 4, 98: 5, 99: 4, 100: 5}
 # QIDs that compute elapsed times (their answers are floats / np.inf).
 TIMING_QIDS = set(TIMING_THRESHOLDS.keys())
 
+SEARCH_STR = re.compile(r'FINAL_(?:SCORE|ANSWER)[^\d]*([012])\s*$', re.IGNORECASE)
+
 
 # ─────────────────────────── Parsing helpers ─────────────────────────── #
 
@@ -121,6 +123,9 @@ def _calc_answer(qid: int, triples: List[Tuple[str, float, float]]) -> object:
     if qid in (95, 96):
         nums = []
         for ans, _, _ in triples:
+            m = SEARCH_STR.search(ans)
+            if m:
+                ans = int(m.group(1))
             try:
                 nums.append(float(ans))
             except (TypeError, ValueError):
@@ -132,6 +137,9 @@ def _calc_answer(qid: int, triples: List[Tuple[str, float, float]]) -> object:
         threshold = TIMING_THRESHOLDS[qid]
         cum = 0
         for ans, _t0, t_end in triples:
+            m = SEARCH_STR.search(ans)
+            if m:
+                ans = int(m.group(1))
             try:
                 cum += int(float(ans))
             except (TypeError, ValueError):
@@ -262,8 +270,8 @@ def _score_single_row(row: pd.Series) -> Tuple[bool, Optional[int]]:
         if "no" in ans and pd.notna(row.binary_no_score):
             return True, int(row.binary_no_score)
         return False, None
-    
-    m = re.search(r'FINAL_(?:SCORE|ANSWER)[^\d]*([012])\s*$', ans, re.IGNORECASE)
+
+    m = SEARCH_STR.search(ans)
     if m:
         return True, int(m.group(1))
 

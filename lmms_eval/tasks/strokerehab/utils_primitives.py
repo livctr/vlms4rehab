@@ -8,7 +8,6 @@ import datasets
 import pandas as pd
 
 from Levenshtein import distance as levenshtein_distance
-from loguru import logger as eval_logger
 
 from data.utils_strokerehab import (
     DataPaths, PrimitiveLabelUtils, resps_to_string, string_to_resps,
@@ -368,7 +367,13 @@ strokerehab_load_dataset_C00015 = partial(load_strokerehab_primitives_dataset,
                                      patients='C00015',
                                      activity='brushing,combing,deodrant,drinking,feeding,glasses',
                                      reps='first')
-strokerehab_load_dataset_debug = partial(load_strokerehab_primitives_dataset, patients='S0001', activity='face wash', reps='first')
+test_videos = [
+    "C00020/C00020_combing1_2.mkv",
+    "C00020/C00020_shelf right side1_2.mkv",
+]
+regex = "|".join([f"({v})" for v in test_videos])
+regex = rf"^({regex})$"
+strokerehab_load_dataset_debug = partial(load_strokerehab_primitives_dataset, video_regex=regex)
 strokerehab_load_dataset_S0001_small = partial(load_strokerehab_primitives_dataset, patients='S0001', reps='first')
 strokerehab_load_dataset_S0001 = partial(load_strokerehab_primitives_dataset, patients='S0001')
 strokerehab_load_dataset_3patients = partial(load_strokerehab_primitives_dataset, patients='C00011,S0001,S0002')
@@ -383,3 +388,10 @@ strokerehab_load_primitives_data = partial(load_strokerehab_primitives_dataset, 
 
 regex = r'^(C00020/C00020_glasses1_1.mkv|C00020/C00020_drinking1_1.mkv|C00020/C00020_combing1_1.mkv|C00020/C00020_face wash1_1.mkv|C00020/C00020_shelf right side1_1.mkv|C00020/C00020_deodrant1_1.mkv)$'
 strokerehab_load_dataset_healthy_subset = partial(load_strokerehab_primitives_dataset, video_regex=regex)
+
+
+strokerehab_load_small_test = partial(load_strokerehab_primitives_dataset,
+                                      patients='C00020,C00023',
+                                      reps='first')
+
+

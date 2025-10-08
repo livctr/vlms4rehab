@@ -2,8 +2,8 @@ import base64
 from io import BytesIO
 from typing import List, Optional, Tuple, Union
 
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import decord
 import numpy as np
