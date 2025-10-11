@@ -260,6 +260,97 @@ class HandLocator:
         K2I = self.stream.KEYPOINT_TO_IDX
         return (K2I["right_elbow"], K2I["right_wrist"]) if handedness == "right" else (K2I["left_elbow"], K2I["left_wrist"])
     
+    def _clamp_xy(self, x: float, y: float, W: int, H: int) -> Tuple[int, int]:
+        """Round then clamp (x, y) to [0..W-1], [0..H-1]."""
+        xi = int(round(float(x)))
+        yi = int(round(float(y)))
+        if xi < 0: xi = 0
+        elif xi >= W: xi = W - 1
+        if yi < 0: yi = 0
+        elif yi >= H: yi = H - 1
+        return xi, yi
+
+    def _nan_in_triplet(self, triplet: np.ndarray) -> bool:
+        """True if any NaN in a (x, y, conf) triplet."""
+        return np.isnan(triplet).any()
+
+    def _append_placeholder(
+        self,
+        out: Dict[str, Dict[str, List[np.ndarray]]],
+        side: str,
+        dtype: np.dtype,
+    ) -> None:
+        """Append placeholder (nan, nan, 0.0) for wrist/elbow/hand."""
+        ph = np.array([np.nan, np.nan, 0.0], dtype=dtype)
+        out[side]["wrist"].append(ph)
+        out[side]["elbow"].append(ph)
+        out[side]["hand"].append(ph)
+
+    def _append_keypoints(
+        self,
+        out: Dict[str, Dict[str, List[np.ndarray]]],
+        side: str,
+        *,
+        wrist: Tuple[int, int, float],
+        elbow: Tuple[int, int, float],
+        hand: Tuple[int, int, float],
+        dtype: np.dtype,
+    ) -> None:
+        """Append concrete wrist/elbow/hand triplets."""
+        out[side]["wrist"].append(np.asarray(wrist, dtype=dtype))
+        out[side]["elbow"].append(np.asarray(elbow, dtype=dtype))
+        out[side]["hand"].append(np.asarray(hand, dtype=dtype))
+
+    def _compute_hand_from_elbow_wrist(
+        self,
+        elbow: np.ndarray,
+        wrist: np.ndarray,
+    ) -> Tuple[float, float, float]:
+        """
+        Heuristic hand = elbow + (wrist - elbow) * (1 + ratio).
+        Conf = min(conf_wrist, conf_elbow).
+        """
+        ex, ey, ec = map(float, elbow)
+        wx, wy, wc = map(float, wrist)
+        ratio = 1.0 + float(self.hand_wrist_elbow_ratio)
+        hx = ex + (wx - ex) * ratio
+        hy = ey + (wy - ey) * ratio
+        hc = float(min(wc, ec))
+        return hx, hy, hc
+
+    def _process_side(
+        self,
+        out: Dict[str, Dict[str, List[np.ndarray]]],
+        side: str,
+        kp: np.ndarray,               # shape (17, 3)
+        idx_elbow: int,
+        idx_wrist: int,
+        W: int,
+        H: int,
+    ) -> None:
+        """Read elbow/wrist, handle NaNs, compute hand, clamp, append."""
+        dtype = kp.dtype
+        elbow = kp[idx_elbow]  # (3,)
+        wrist = kp[idx_wrist]  # (3,)
+
+        if self._nan_in_triplet(elbow) or self._nan_in_triplet(wrist):
+            self._append_placeholder(out, side, dtype)
+            return
+
+        hx, hy, hc = self._compute_hand_from_elbow_wrist(elbow, wrist)
+        ex_i, ey_i = self._clamp_xy(elbow[0], elbow[1], W, H)
+        wx_i, wy_i = self._clamp_xy(wrist[0], wrist[1], W, H)
+        hx_i, hy_i = self._clamp_xy(hx, hy, W, H)
+
+        self._append_keypoints(
+            out,
+            side,
+            wrist=(wx_i, wy_i, float(wrist[2])),
+            elbow=(ex_i, ey_i, float(elbow[2])),
+            hand=(hx_i, hy_i, hc),
+            dtype=dtype,
+        )
+
     def process_frames(
         self,
         frames: np.ndarray,
@@ -303,50 +394,11 @@ class HandLocator:
             "right": {"wrist": [], "elbow": [], "hand": []},
         }
 
-        def _append_placeholder(side: str, dtype):
-            zero = np.array([np.nan, np.nan, 0.0], dtype=dtype)
-            out[side]["wrist"].append(zero)
-            out[side]["elbow"].append(zero)
-            out[side]["hand"].append(zero)
-
-        def _process_side(side: str, idx_elbow: int, idx_wrist: int):
-            wx, wy, wc = kp[idx_wrist]
-            ex, ey, ec = kp[idx_elbow]
-
-            # NaN check — if any NaN, push placeholders for this frame/side
-            if (
-                np.isnan(wx) or np.isnan(wy) or np.isnan(wc) or
-                np.isnan(ex) or np.isnan(ey) or np.isnan(ec)
-            ):
-                _append_placeholder(side, dtype)
-                return
-
-            # Heuristic hand position from elbow→wrist vector
-            hx = ex + (wx - ex) * (1.0 + self.hand_wrist_elbow_ratio)
-            hy = ey + (wy - ey) * (1.0 + self.hand_wrist_elbow_ratio)
-            hc = float(min(wc, ec))
-
-            # Clamp to image bounds (round to ints for pixel coords)
-            def _clamp_xy(x, y):
-                x = int(max(0, min(W - 1, round(float(x)))))
-                y = int(max(0, min(H - 1, round(float(y)))))
-                return x, y
-
-            wx_i, wy_i = _clamp_xy(wx, wy)
-            ex_i, ey_i = _clamp_xy(ex, ey)
-            hx_i, hy_i = _clamp_xy(hx, hy)
-
-            out[side]["wrist"].append(np.array([wx_i, wy_i, float(wc)], dtype=dtype))
-            out[side]["elbow"].append(np.array([ex_i, ey_i, float(ec)], dtype=dtype))
-            out[side]["hand"].append(np.array([hx_i, hy_i, hc], dtype=dtype))
-
         for i in range(T):
             kps = self.stream.process_frame(frames[i])  # (1, num_person, 17, 3)
             kp = kps[0, 0]                              # (17, 3)
-            dtype = kp.dtype
-            _process_side("left",  l_elbow_idx, l_wrist_idx)
-            _process_side("right", r_elbow_idx, r_wrist_idx)
-
+            self._process_side(out, "left",  kp, l_elbow_idx, l_wrist_idx, W, H)
+            self._process_side(out, "right", kp, r_elbow_idx, r_wrist_idx, W, H)
         return out
 
 
@@ -397,7 +449,7 @@ def _hand_relative_position(
     other_mid: Tuple[float, float],
     cur_conf: float,
     other_conf: float,
-    close_thresh: int = 42
+    close_thresh: int = 56
 ) -> str:
     """Determine relative text: close→front/back else LEFT/RIGHT/ABOVE/BELOW."""
     dx = float(cur_mid[0] - other_mid[0])
@@ -609,33 +661,80 @@ class GraspReleaseProcessingNode(ProcessingNode):
     """
     GRASP_PROMPT = (
         "Target objects: {target_objects}\n\n"
-        "This chunk follows one where {the_referred_hand} was not in contact with any target object. "
-        "Now, observe whether it begins to make contact with or close around any target object. "
-        "Focus on hand-shape cues indicating grasping, especially finger curl/closure, "
-        "thumb opposition, and pinch or power-grip shape. Further, if you need to distinguish between "
-        "'deodorant cap' and 'deodorant tube', or 'water bottle cap' and 'water bottle', use the relative "
-        "positioning of the hand to make your choice (e.g. the higher hand is likely to be in contact with "
-        "the cap if the water bottle is upright). \n\n"
-        "Question: Which target object does {the_referred_hand} make contact with?\n"
-        "Answer directly with only one of the target object names (e.g. 'Fork.', 'Cup.') or 'None.'"
+        "This clip follows one where {the_referred_hand} hasn't made contact with a target object yet. "
+        "Question: Does {the_referred_hand} actively make contact with a target object in this clip? "
+        "If so, either answer with the name of the object (e.g. 'Fork.', 'Cup.'). "
+        "Otherwise, answer 'Not yet.' (e.g. if the hand is just resting on the object rather than supporting it)."
+        # "Now, observe whether it makes contact with or closes around any target object. "
+        # "Focus on hand-shape cues indicating grasping, especially finger curl/closure, "
+        # "thumb opposition, and pinch or power-grip shape. Further, if you need to distinguish between "
+        # "'deodorant cap' and 'deodorant tube', or 'water bottle cap' and 'water bottle', use the relative "
+        # "positioning of the hand to make your choice (e.g. the higher hand is likely to be in contact with "
+        # "the cap if the water bottle is upright). \n\n"
+        # "Question: Which target object does {the_referred_hand} make contact with?\n"
+        # "Answer directly with only one of the target object names (e.g. 'Fork.', 'Cup.') or 'Not yet.' "
+        # "if contact has not been made by the end of this clip.\n"
     )
 
     RELEASE_PROMPT = (
-        "This chunk follows one where {the_referred_hand} was holding a(n) {target_object}. "
-        "Now, observe whether it begins to open or let go of that object. "
-        "Focus on hand-shape cues indicating releasing - finger extension or relaxation, "
-        "loss of thumb opposition, or the hand moving away while the fingers uncurl. "
-        "If the object is hard to see due to occlusion, camouflage, or motion blur, "
-        "support your decision based on how the hand looks and moves: a continuation of contact "
-        "is likely if the hand and/or object are in motion (we're tracking the hand), still in the "
-        "air, or if the hand's shape still looks like a grasp. The case of occlusion, camouflage, "
-        "and motion blur is most likely for the following small objects: deodorant cap, comb, "
-        "glasses, fork, knife, water bottle cap, toothbrush. In such cases, you should likely "
-        "answer 'Not yet.' If {the_referred_hand} looks like it is setting an object down, e.g., "
-        "on a table or a glass shelf, or letting go of an object, answer 'Released.' \n\n"
-        "Question: Has {the_referred_hand} released the {target_object}? "
-        "Answer 'Released.' or 'Not yet.'\n"
+        "This clip follows one where {the_referred_hand} was holding a(n) {target_object}. "
+        "Answer directly: 'Yes.' if the hand lets go of it in this chunk and the {target_object} is visible; "
+        "answer 'No.' otherwise.\n"
     )
+    RELEASE_CHECK_1_PROMPT = (
+        "Is a(n) {target_object} visible? Answer 'Yes.' or 'No.' directly.\n"
+    )
+    RELEASE_CHECK_2_PROMPT = (
+        "Is the {target_object} being held by a hand? Answer 'Yes.' or 'No.' directly.\n"
+    )
+
+    # RELEASE_PROMPT = (
+    #     "This clip follows one where {the_referred_hand} was detected to grasp a(n) {target_object}. "
+    #     "Answer directly: 'Released.' if the hand lets go of it in this clip and the {target_object} is "
+    #     "visible; answer 'No.' otherwise. \n"
+    #     # "For small objects, answer 'Not yet.' until the hand looks like it is setting the object down "
+    #     # "(e.g. on a surface)."
+    # )
+    # RELEASE_CHECK_1_PREV_LOC = (
+    #     "Is a(n) {target_object} visible? Answer 'Yes.' or 'No.' directly.\n"
+    # )
+    # RELEASE_CHECK_2_CUR_LOC = (
+    #     "Is the {the_referred_hand} holding a(n) {target_object}? Answer 'Yes.' or 'No.' directly.\n"
+    # )
+
+    # RELEASE_PROMPT = (
+    #     "This clip follows one where {the_referred_hand} was detected to hold a(n) {target_object}. "
+    #     "It can be holding a different object now. "
+    #     "Question: Does {the_referred_hand} release an object in this clip? "
+    #     "Answer 'Released.' if {the_referred_hand} looks like it is moving away from the object, "
+    #     "the fingers pull away from the object, or the hand opens up. "
+    #     "Otherwise, answer 'Not yet.' "
+    # #     "If {the_referred_hand} looks like it is still holding or transporting the object, answer 'Not yet.' "
+    # #     # "For small object (e.g. deodorant cap, comb, glasses, fork, knife, water bottle cap, toothpaste, toothbrush), "
+    # #     # "answer 'Not yet.' if the hand looks like it is still transporting the object. "
+    # #     # "In fast-moving scenes (e.g. we're tracking the hand) or for small objects "
+    # #     # "that can be hard to see due to camouflage, motion blur, or occlusion "
+    # #     # "(e.g. deodorant cap, comb, glasses, fork, knife, water bottle cap, toothpaste, toothbrush), "
+    # #     # "answer 'Release.' if until the hand looks like it is setting the object down (e.g. on a surface) "
+    # #     # "or letting go. "
+    # #     # "For large objects (e.g. bread, cup, deodorant tube, faucet handle, margarine, "
+    # #     # "paper plate, re-sealable plastic bag, toilet paper roll, tub, washcloth, water bottle) or situations "
+    # #     # "where the object is at least partially visible, be more confident in answering 'Released.'"
+    # #     "Question: Has {the_referred_hand} released the {target_object}? \n"
+    # #     "Answer: 'Released.' or 'Not yet.'\n"
+    # )
+
+    # WHICH_OBJECT_IN_CONTACT_PROMPT = (
+    #     "Target objects: {target_objects}\n\n"
+    #     "Focus specifically on {the_referred_hand}. "
+    #     "Question: which target object is {the_referred_hand} holding/manipulating/moving/grasping? "
+    #     "If the hand is only resting on the object (e.g. the fingers and wrist appear relaxed), "
+    #     "that does not count as a grasp. "
+    #     "If the hand looks like it is transporting an object but the object is unclear, "
+    #     "just answer 'Object.' "
+    #     "If the hand looks like it is not interacting with any object at all, answer 'None.' "
+    #     "Answer directly with only one of the target object names (e.g. 'Fork.', 'Cup.') or 'Object.' or 'None.'"
+    # )
 
     def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
         super().__init__(ctx, vlm, **fmt)
@@ -667,7 +766,22 @@ class GraspReleaseProcessingNode(ProcessingNode):
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[bool, str]:
         """Release check after 'release.' """
-        return True, "N/A"
+        if len(self.ctx.bboxes) == 0:
+            return True, "Cannot check"
+        # Only allow release if CHECK_1 is yes and CHECK_2 is no.
+        fmt = {**self.fmt, "target_object": self.ctx.held_object}
+        prev_bboxes = [self.ctx.bboxes[0] for _ in range(len(frames))]
+        ans1 = self._query_vlm(
+            fast_mvt, hand_reference, frames, prev_bboxes, self.RELEASE_CHECK_1_PROMPT, **fmt
+        ).strip().lower()
+        if "yes" in ans1:
+            ans2 = self._query_vlm(
+                fast_mvt, hand_reference, frames, prev_bboxes, self.RELEASE_CHECK_2_PROMPT, **fmt
+            ).strip().lower()
+        else:
+            ans2 = "N/A"
+        release_confirmed = ("yes" in ans1) and ("no" in ans2)
+        return release_confirmed, f"Checked released ({ans1} | {ans2})"
 
     def run(
         self,
@@ -676,29 +790,97 @@ class GraspReleaseProcessingNode(ProcessingNode):
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
+        # ans = self._query_vlm(
+        #     fast_mvt, hand_reference, frames, bboxes, self.WHICH_OBJECT_IN_CONTACT_PROMPT, **self.fmt
+        # ).lower()
+        # held_obj = ''.join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
+        # if held_obj == "" or "none" in held_obj:
+        #     held_obj = ""
+        # return (
+        #     held_obj,
+        #     {"method": "GRP[W]", "outputs": f"{held_obj} ({ans})"}
+        # )
+
         cur_idle = self.ctx.idle
         if cur_idle:
             return "", {"method": "GRP[IDLE]", "outputs": "N/A"}
-
         prev_contact = self.ctx.contact
+
         if prev_contact:
             held_obj = self.ctx.held_object
-            fmt = {**self.fmt, "target_object": self.ctx.held_object}
-            ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT, **fmt).lower()
 
-            if "release" in ans:
-                held_obj = ""
-            return (
-                held_obj,
-                {"method": "GRP[R]", "outputs": f"{held_obj} ({ans})"}
+            fmt = {**self.fmt, "target_object": held_obj}
+            released = self._query_vlm(
+                fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT, **fmt
+            ).lower()
+            if "yes" in released:
+                return (
+                    "", {"method": "GRP[R]", "outputs": f"Released ({released})"}
+                )
+            
+            released_checked, released_checked_info = self._release_check(
+                fast_mvt, hand_reference, frames, bboxes
             )
+            if released_checked:
+                return (
+                    "", {"method": "GRP[R]", "outputs": f"Released ({released} | {released_checked_info})"}
+                )
+            return (
+                held_obj, {"method": "GRP[R]", "outputs": f"Held ({released} | {released_checked_info})"}
+            )
+
+
+            # which_obj = self._query_vlm(
+            #     fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT_1, **self.fmt
+            # ).lower()
+            # which_obj = "".join([ch for ch in which_obj if ch.isalpha() or ch.isspace()]).strip()
+            # if which_obj == "" or "none" in which_obj:
+            #     # Not visible. Abstain from making a decision (use the previous held object).
+            #     released = "N/A"
+            # else:
+            #     fmt = {**self.fmt, "target_object": which_obj}
+            #     released = self._query_vlm(
+            #         fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT_2, **fmt
+            #     ).lower()
+            #     released = "".join([ch for ch in released if ch.isalpha() or ch.isspace()]).strip()
+            #     if "release" in released:
+            #         held_obj = ""
+            #     else:
+            #         held_obj = which_obj  # Update held object to the newly identified one
+            # return (
+            #     held_obj,
+            #     {"method": "GRP[R]", "outputs": f"{held_obj} ({which_obj} | {released})"}
+            # )
+
+
+            # fmt = {**self.fmt, "target_object": self.ctx.held_object}
+            # ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT, **fmt).lower()
+            # ans2, ans3 = "N/A", "N/A"
+            # if "release" in ans:
+            #     held_obj = ""
+            # else:
+            #     # Could be a missed detection
+            #     prev_bboxes = self.ctx.bboxes
+            #     ans2 = self._query_vlm(
+            #         fast_mvt, hand_reference, frames, prev_bboxes, self.RELEASE_CHECK_1_PREV_LOC, **fmt
+            #     ).lower()
+            #     if "yes" in ans2:
+            #         ans3 = self._query_vlm(
+            #             fast_mvt, hand_reference, frames, bboxes, self.RELEASE_CHECK_2_CUR_LOC, **fmt
+            #         ).lower()
+            #         if "no" in ans3:
+            #             held_obj = ""
+            # return (
+            #     held_obj,
+            #     {"method": "GRP[R]", "outputs": f"{held_obj} ({ans} | {ans2} | {ans3}). "}
+            # )
 
         else:
             ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
-            if "none" in ans:
+            if "not yet" in ans:
                 held_obj = ""
             else:
-                held_obj = ''.join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
+                held_obj = "".join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
             return (
                 held_obj,
                 {"method": "GRP[G]", "outputs": f"{held_obj} ({ans})"}
@@ -715,9 +897,11 @@ class IdleProcessingNode(ProcessingNode):
     IDLE_PROMPT = (
         "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
         "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
-        "Answer 'IDLE' if the hand looks to be at rest, even if it is near an object or in the air. \n"
+        "Answer 'IDLE' if the hand looks to be at rest without holding an object, "
+        "even if it is near an object or in the air. \n"
         "(Active) {the_referred_hand} is moving with purpose — its fingers or wrist are tensed, changing position, "
-        "or interacting with an object through reaching, grasping, pressing, turning, adjusting, or squeezing."
+        "or interacting with an object through reaching, grasping, pressing, turning, adjusting, squeezing, or holding. "
+        "If the hand looks like it is holding an object, answer 'ACTIVE'."
     )
 
     def run(
