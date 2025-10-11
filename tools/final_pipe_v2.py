@@ -609,41 +609,32 @@ class GraspReleaseProcessingNode(ProcessingNode):
     """
     GRASP_PROMPT = (
         "Target objects: {target_objects}\n\n"
-        "This chunk follows one where {the_referred_hand} was not holding any target object. "
-        "Does {the_referred_hand} make contact with a target object in this chunk? "
-        "Use "
-
-        "Answer directly: 'Grasp.' if {the_referred_hand} grasps a target object in this chunk. "
-        ""
-
-        "Answer directly: 'Touch.' if {the_referred_hand} touches a target object in this chunk; "
-        "answer 'Not yet.' otherwise.\n"
+        "This chunk follows one where {the_referred_hand} was not in contact with any target object. "
+        "Now, observe whether it begins to make contact with or close around any target object. "
+        "Focus on hand-shape cues indicating grasping, especially finger curl/closure, "
+        "thumb opposition, and pinch or power-grip shape. Further, if you need to distinguish between "
+        "'deodorant cap' and 'deodorant tube', or 'water bottle cap' and 'water bottle', use the relative "
+        "positioning of the hand to make your choice (e.g. the higher hand is likely to be in contact with "
+        "the cap if the water bottle is upright). \n\n"
+        "Question: Which target object does {the_referred_hand} make contact with?\n"
+        "Answer directly with only one of the target object names (e.g. 'Fork.', 'Cup.') or 'None.'"
     )
 
-    IDLE_PROMPT = (
-        "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
-        "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
-        "Answer 'IDLE' if it looks to be at rest, even if it is near an object. The hand can be "
-        "in the air. \n"
-        "(Active) {the_referred_hand} is moving with purpose — its fingers or wrist are tensed, changing position, "
-        "or interacting with an object through reaching, grasping, pressing, turning, adjusting, or squeezing."
-    )
-
-
-    WHICH_OBJECT_IN_CONTACT_PROMPT = (
-        "Target objects: {target_objects}\n\n"
-        "Which target object does {the_referred_hand} touch? "
-        "Answer directly (e.g. 'Fork.', 'Cup.'). ONLY RETURN ONE OBJECT! \n"
-    )
-    WHAT_COLOR_IS_THE_OBJECT_PROMPT = (
-        "What color is the {target_object}? "
-        "If you can't see, ignore the visual input and guess based on your prior knowledge. "
-        "Answer directly (e.g. 'Pink.', 'Blue.').\n"
-    )
     RELEASE_PROMPT = (
         "This chunk follows one where {the_referred_hand} was holding a(n) {target_object}. "
-        "Answer directly: 'Release.' if {the_referred_hand} lets go of it in this chunk; "
-        "answer 'Not yet.' otherwise.\n"
+        "Now, observe whether it begins to open or let go of that object. "
+        "Focus on hand-shape cues indicating releasing - finger extension or relaxation, "
+        "loss of thumb opposition, or the hand moving away while the fingers uncurl. "
+        "If the object is hard to see due to occlusion, camouflage, or motion blur, "
+        "support your decision based on how the hand looks and moves: a continuation of contact "
+        "is likely if the hand and/or object are in motion (we're tracking the hand), still in the "
+        "air, or if the hand's shape still looks like a grasp. The case of occlusion, camouflage, "
+        "and motion blur is most likely for the following small objects: deodorant cap, comb, "
+        "glasses, fork, knife, water bottle cap, toothbrush. In such cases, you should likely "
+        "answer 'Not yet.' If {the_referred_hand} looks like it is setting an object down, e.g., "
+        "on a table or a glass shelf, or letting go of an object, answer 'Released.' \n\n"
+        "Question: Has {the_referred_hand} released the {target_object}? "
+        "Answer 'Released.' or 'Not yet.'\n"
     )
 
     def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
@@ -696,21 +687,18 @@ class GraspReleaseProcessingNode(ProcessingNode):
             ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT, **fmt).lower()
 
             if "release" in ans:
-                released_verified, released_verified_info = self._release_check(
-                    fast_mvt, hand_reference, frames, bboxes
-                )
-                if released_verified:
-                    held_obj = ""
-            else:
-                released_verified_info = "N/A"
+                held_obj = ""
             return (
                 held_obj,
-                {"method": "GRP[R]", "outputs": f"{held_obj} ({ans} | {released_verified_info})"}
+                {"method": "GRP[R]", "outputs": f"{held_obj} ({ans})"}
             )
 
         else:
             ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
-            held_obj = self._get_held_object(fast_mvt, hand_reference, frames, bboxes) if "touch" in ans else ""
+            if "none" in ans:
+                held_obj = ""
+            else:
+                held_obj = ''.join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
             return (
                 held_obj,
                 {"method": "GRP[G]", "outputs": f"{held_obj} ({ans})"}
@@ -727,8 +715,7 @@ class IdleProcessingNode(ProcessingNode):
     IDLE_PROMPT = (
         "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
         "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
-        "Answer 'IDLE' if it looks to be at rest, even if it is near an object. The hand can be "
-        "in the air. \n"
+        "Answer 'IDLE' if the hand looks to be at rest, even if it is near an object or in the air. \n"
         "(Active) {the_referred_hand} is moving with purpose — its fingers or wrist are tensed, changing position, "
         "or interacting with an object through reaching, grasping, pressing, turning, adjusting, or squeezing."
     )
@@ -905,7 +892,7 @@ class HandStateMachine:
 def _get_target_objects(video_path: str) -> str:
     video_path = video_path.lower()
     if "face" in video_path:
-        return "Target objects: washcloth, handle, tub"
+        return "Target objects: washcloth, faucet handle, tub"
     elif "deodrant" in video_path or "deodorant" in video_path:  # include both
         return "Target objects: deodorant tube, deodorant cap"
     elif "combing" in video_path:
@@ -915,9 +902,9 @@ def _get_target_objects(video_path: str) -> str:
     elif "feeding" in video_path:
         return "Target objects: paper plate, fork, knife, re-sealable plastic bag, bread, margarine"
     elif "drinking" in video_path:
-        return "Target objects: water bottle, bottle cap, cup"
+        return "Target objects: water bottle, water bottle cap, cup"
     elif "brushing" in video_path:
-        return "Target objects: toothpaste, toothbrush, handle"
+        return "Target objects: toothpaste, toothbrush, faucet handle"
     else:
         return "Target objects: toilet paper roll"
 
