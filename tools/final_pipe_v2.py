@@ -88,11 +88,6 @@ from loguru import logger as eval_logger
 
 ####################################### DATA CLASSES #######################################
 
-class HandStateStatus:
-    OK = "OK"
-    ABSTAIN = "ABSTAIN"
-    FAST_MOVEMENT = "FAST"
-
 
 class InteractionType:
     NONE = ""
@@ -112,7 +107,8 @@ class HandPrimitives:
 
 @dataclass
 class VideoChunk:
-    pose_status: str
+    fast_mvt: bool
+    hand_reference: str
     frames: np.ndarray
     bboxes: List[Tuple[int, int, int, int]]
     start_t: float
@@ -125,7 +121,11 @@ class HandCtx:
     The hand state that moves through the nodes.
     """
     handedness: str  # "left" | "right"
-    status: str = HandStateStatus.OK  # "OK" | "ABSTAIN" | "FAST"
+
+    # Whether the hand is moving fast, as identified by the pose model
+    fast_mvt: bool = False
+    # How the hand is referred to in the prompt, as identified by the cropper
+    hand_reference: str = "the hand in focus"
 
     held_object: str = ""  # Assume the hand can hold only one object at a time.
     idle: bool = True
@@ -134,7 +134,6 @@ class HandCtx:
     # Frames and hand location of the previous chunk.
     frames: np.ndarray = field(default_factory=lambda: np.zeros((0, 224, 224, 3), dtype=np.uint8))
     bboxes: List[Tuple[int, int, int, int]] = field(default_factory=list)
-    bboxes_last_ok: List[Tuple[int, int, int, int]] = field(default_factory=list)
 
     @property
     def contact(self) -> bool:
@@ -374,6 +373,51 @@ def _bbox_at_center_with_side(
     x2 = min(W, x2); y2 = min(H, y2)
     return x1, y1, x2, y2
 
+
+def _get_first_last_conf(
+    kps: Dict[str, Dict[str, List[np.ndarray]]],
+    handedness: str,
+    conf_thresh: float
+) -> Tuple[np.ndarray, np.ndarray, bool, float, float]:
+    """Return first/last keypoints, confidence booleans, and usable flag."""
+    first = kps[handedness]["hand"][0]
+    last = kps[handedness]["hand"][-1]
+    conf_first, conf_last = float(first[2]), float(last[2])
+    ok = (conf_first >= conf_thresh) and (conf_last >= conf_thresh)
+    return first, last, ok, conf_first, conf_last
+
+
+def _midpoint(pt0: np.ndarray, pt1: np.ndarray) -> Tuple[float, float]:
+    """Return midpoint between two (x, y) coordinates."""
+    return ((pt0[0] + pt1[0]) / 2.0, (pt0[1] + pt1[1]) / 2.0)
+
+
+def _hand_relative_position(
+    cur_mid: Tuple[float, float],
+    other_mid: Tuple[float, float],
+    cur_conf: float,
+    other_conf: float,
+    close_thresh: int = 42
+) -> str:
+    """Determine relative text: close→front/back else LEFT/RIGHT/ABOVE/BELOW."""
+    dx = float(cur_mid[0] - other_mid[0])
+    dy = float(cur_mid[1] - other_mid[1])
+
+    if max(abs(dx), abs(dy)) <= close_thresh:
+        return "the hand in front" if cur_conf >= other_conf else "the hand in the back"
+
+    if dx <= -abs(dy):
+        where = "on the LEFT SIDE"
+    elif dx >= abs(dy):
+        where = "on the RIGHT SIDE"
+    elif dy <= -abs(dx):
+        where = "ABOVE"
+    else:
+        where = "BELOW"
+
+    return f"the hand {where} relative to the camera"
+
+
 class HandCropper:
     """
     Different hand-centric cropping methods, applied on top of HandLocator.
@@ -414,63 +458,91 @@ class HandCropper:
     def clear(self) -> None:
         pass
 
-    def process_frames(self,
-                       frames: np.ndarray,
-                       handedness: str,
-                       kps: Dict[str, Dict[str, List[np.ndarray]]],
-                       *,
-                       bbox_side: int = 224
-    ):
+    def process_frames(
+        self,
+        frames: np.ndarray,
+        handedness: str,
+        kps: Dict[str, Dict[str, List[np.ndarray]]],
+        *,
+        bbox_side: int = 224,
+    ) -> Tuple[bool, str, List[Tuple[int, int, int, int]]]:
         """
-        Given the list of hand keypoints for a list of frames, produce crops
-        on the hand keypoints.
+        Compute per-frame crops around the target hand based on keypoint confidence and motion,
+        then produce a textual hand_reference describing which hand is being referred to.
 
         Returns:
-            List of per-frame bounding boxes (x1, y1, x2, y2), ints.
-            Flag indicating status: "OK", "ABSTAIN", "FAST". If "ABSTAIN", 
-                all boxes are full-frame. If "FAST" or "OK", the boxes are cropped
-                determined by the interpolation strategy.
+            moving_crop: bool indicating whether the crop is moving across frames.
+            ref_text:    A short phrase per the decision rules.
+            crop_boxes:  List[(x1, y1, x2, y2)] for each frame.
         """
         T, H, W, _ = frames.shape
 
-        cur_first = kps[handedness]["hand"][0]
-        cur_last = kps[handedness]["hand"][-1]
-        cur_ok = (cur_first[2] >= self.kp_conf_thresh) and (cur_last[2] >= self.kp_conf_thresh)
-        if not cur_ok:  # or _bbox_contains_points(cur_bbox, (other_mid,)):
+        cur_first, cur_last, cur_ok, cur_conf_first, cur_conf_last = _get_first_last_conf(
+            kps, handedness, self.kp_conf_thresh
+        )
+        other = "left" if handedness == "right" else "right"
+        other_first, other_last, other_ok, other_conf_first, other_conf_last = _get_first_last_conf(
+            kps, other, self.kp_conf_thresh
+        )
+
+        # --- Step 1: Crop computation (same logic as before) ---
+        if not cur_ok:
             full = (0, 0, int(W), int(H))
-            return "ABSTAIN", [full for _ in range(T)]
-        
-        # cur_mid = (cur_first[0] + cur_last[0]) / 2.0, (cur_first[1] + cur_last[1]) / 2.0
-
-        # other = "left" if handedness == "right" else "right"
-        # other_first = kps[other]["hand"][0]
-        # other_last = kps[other]["hand"][-1]
-        # other_mid = (other_first[0] + other_last[0]) / 2.0, (other_first[1] + other_last[1]) / 2.0
-
-        # cur_bbox = _bbox_at_center_with_side(cur_mid, side=bbox_side, W=W, H=H)
-
-        dist = max(abs(cur_last[0] - cur_first[0]), abs(cur_last[1] - cur_first[1]))
-        fast_mvt = (dist >= self.fast_movement_thresh * (T - 1)) and (T >= self.min_frames_for_fast_movement)
-        if fast_mvt:
-            crop_boxes = [
-                _bbox_at_center_with_side(
-                    (
-                        (1 - alpha) * cur_first[0] + alpha * cur_last[0],
-                        (1 - alpha) * cur_first[1] + alpha * cur_last[1]
-                    ),
-                    side=bbox_side, W=W, H=H
-                )
-                for alpha in (i / (T - 1) if T > 1 else 0.0 for i in range(T))
-            ]
+            crop_boxes = [full for _ in range(T)]
+            moving_crop = False
         else:
-            crop_boxes = [
-                _bbox_at_center_with_side(
-                    ((cur_first[0] + cur_last[0]) / 2.0, (cur_first[1] + cur_last[1]) / 2.0),
-                    side=bbox_side, W=W, H=H
-                )
-                for _ in range(T)
-            ]
-        return ("FAST" if fast_mvt else "OK", crop_boxes)
+            dist = max(abs(cur_last[0] - cur_first[0]), abs(cur_last[1] - cur_first[1]))
+            fast_mvt = (dist >= self.fast_movement_thresh * max(1, (T - 1))) and (
+                T >= self.min_frames_for_fast_movement
+            )
+            moving_crop = bool(fast_mvt)
+
+            if fast_mvt:
+                crop_boxes = [
+                    _bbox_at_center_with_side(
+                        (
+                            (1 - alpha) * cur_first[0] + alpha * cur_last[0],
+                            (1 - alpha) * cur_first[1] + alpha * cur_last[1],
+                        ),
+                        side=bbox_side,
+                        W=W,
+                        H=H,
+                    )
+                    for alpha in (i / (T - 1) if T > 1 else 0.0 for i in range(T))
+                ]
+            else:
+                mid = _midpoint(cur_first, cur_last)
+                box = _bbox_at_center_with_side(mid, side=bbox_side, W=W, H=H)
+                crop_boxes = [box for _ in range(T)]
+
+        # --- Step 2: Textual hand_reference ---
+
+        # Hand is not usable
+        if not cur_ok:
+            if other_ok:
+                ref_text = "the occluded hand of the patient"
+            else:
+                ref_text = f"the patient's {handedness} hand"
+            return moving_crop, ref_text, crop_boxes
+        
+        other_mid = _midpoint(other_first, other_last)
+        other_inframe = _bbox_contains_points(crop_boxes[0], (other_mid,))  # Frames are the same if not moving_crop
+        if moving_crop or not other_ok or not other_inframe:
+            # We assume in these two cases that it is sufficiently obvious for the 
+            # VLM to know which hand we mean.
+            # (1) In a moving crop, we are mainly focusing on the moving hand.
+            # (2) If the other hand is not usable and the current one is, it is likely
+            #     that the current hand is the one that the VLM will pick up on.
+            # (3) The other hand is simply not in frame.
+            ref_text = "the hand being tracked" if moving_crop else "the hand in focus"
+            return moving_crop, ref_text, crop_boxes
+
+        # Both hands are in frame and confident    
+        cur_mid = _midpoint(cur_first, cur_last)
+        cur_mean_conf = 0.5 * (cur_conf_first + cur_conf_last)
+        other_mean_conf = 0.5 * (other_conf_first + other_conf_last)
+        ref_text = _hand_relative_position(cur_mid, other_mid, cur_mean_conf, other_mean_conf)
+        return moving_crop, ref_text, crop_boxes
 
 
 ####################################### GRASP/RELEASE SECTION #######################################
@@ -483,206 +555,6 @@ def _get_cropped(
         cropped = frame[y1:y2, x1:x2]  # standard numpy slicing
         cropped_frames.append(cropped)
     return np.stack(cropped_frames, axis=0)
-
-
-import numpy as np
-
-def _gaussian_kernel1d(sigma: float, radius: int) -> np.ndarray:
-    x = np.arange(-radius, radius + 1, dtype=np.float32)
-    k = np.exp(-(x**2) / (2 * sigma * sigma))
-    k /= k.sum()
-    return k
-
-def _gaussian_blur2d(img: np.ndarray, sigma: float) -> np.ndarray:
-    """Separable Gaussian blur on a 2D float image in [0,1]."""
-    if sigma <= 0:
-        return img
-    radius = max(1, int(3 * sigma))
-    k = _gaussian_kernel1d(sigma, radius)
-    # horizontal
-    pad = ((0, 0), (radius, radius))
-    tmp = np.pad(img, pad, mode="reflect")
-    tmp = np.apply_along_axis(lambda r: np.convolve(r, k, mode="valid"), 1, tmp)
-    # vertical
-    pad = ((radius, radius), (0, 0))
-    tmp = np.pad(tmp, pad, mode="reflect")
-    out = np.apply_along_axis(lambda c: np.convolve(c, k, mode="valid"), 0, tmp)
-    return out
-
-def _conv2_same(a: np.ndarray, k: np.ndarray) -> np.ndarray:
-    """
-    2D convolution with 'same' output size using reflect padding.
-    a: (H, W) float32 in [0,1]
-    k: (kh, kw)
-    returns: (H, W)
-    """
-    H, W = a.shape
-    kh, kw = k.shape
-    ph, pw = kh // 2, kw // 2
-    ap = np.pad(a, ((ph, ph), (pw, pw)), mode="reflect")
-    out = np.zeros((H, W), dtype=np.float32)
-    # small kernel (3x3) → efficient sum of shifted products
-    for m in range(kh):
-        for n in range(kw):
-            out += k[m, n] * ap[m:m+H, n:n+W]
-    return out
-
-def _sobel_gradients(img: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Sobel gradients on a 2D float image in [0,1], returns (gx, gy) both (H, W)."""
-    kx = np.array([[1, 0, -1],
-                   [2, 0, -2],
-                   [1, 0, -1]], dtype=np.float32)
-    ky = np.array([[ 1,  2,  1],
-                   [ 0,  0,  0],
-                   [-1, -2, -1]], dtype=np.float32)
-    gx = _conv2_same(img, kx)
-    gy = _conv2_same(img, ky)
-    return gx, gy
-
-def _local_contrast_normalize(L: np.ndarray, win_sigma: float = 3.0, eps: float = 1e-6) -> np.ndarray:
-    """
-    Simple local contrast normalization:
-      L_norm = (L - mean_blur) / (std_blur + eps), then re-normalize to [0,1] per-frame.
-    """
-    mean = _gaussian_blur2d(L, win_sigma)
-    sqmean = _gaussian_blur2d(L * L, win_sigma)
-    var = np.maximum(sqmean - mean * mean, 0.0)
-    std = np.sqrt(var)
-    Z = (L - mean) / (std + eps)
-
-    # map Z to [0,1] robustly (clip to percentiles to avoid outliers)
-    lo = np.percentile(Z, 1.0)
-    hi = np.percentile(Z, 99.0)
-    if hi <= lo:
-        return np.clip(L, 0.0, 1.0)
-    Z01 = (Z - lo) / (hi - lo)
-    return np.clip(Z01, 0.0, 1.0)
-
-def _edge_mask(L: np.ndarray, grad_sigma: float = 0.8, keep_top_pct: float = 15.0, smooth_sigma: float = 1.0) -> np.ndarray:
-    """
-    Build a soft edge mask from luminance:
-      1) mild blur (noise suppression)
-      2) Sobel magnitude
-      3) percentile threshold to keep strongest edges
-      4) Gaussian smooth to soften mask
-    """
-    Ls = _gaussian_blur2d(L, grad_sigma)
-    gx, gy = _sobel_gradients(Ls)
-    mag = np.sqrt(gx * gx + gy * gy)
-
-    thr = np.percentile(mag, 100.0 - keep_top_pct)
-    hard = (mag >= thr).astype(np.float32)
-
-    soft = _gaussian_blur2d(hard, smooth_sigma)
-    # normalize soft mask to [0,1]
-    if soft.max() > 0:
-        soft = soft / (soft.max() + 1e-6)
-    return np.clip(soft, 0.0, 1.0)
-
-def _unsharp(L: np.ndarray, sigma: float = 1.0) -> np.ndarray:
-    """High-frequency component for unsharp masking: H = L - blur(L)."""
-    blur = _gaussian_blur2d(L, sigma)
-    H = L - blur
-    return H
-
-def enhance_outline_for_vlm(
-    frames: np.ndarray,
-    *,
-    # Local contrast normalization
-    lcn_sigma: float = 3.0,
-    # Edge mask construction
-    edge_blur_sigma: float = 0.8,
-    edge_keep_top_pct: float = 15.0,
-    edge_smooth_sigma: float = 1.0,
-    # Unsharp mask
-    unsharp_sigma: float = 1.0,
-    unsharp_amount: float = 0.7,
-    # Temporal smoothing (EMA on edge mask)
-    temporal_alpha: float = 0.6,
-) -> np.ndarray:
-    """
-    Emphasize object outlines for low-contrast scenes using only NumPy.
-
-    Pipeline per frame:
-      1) Convert to luminance L = 0.299 R + 0.587 G + 0.114 B (in float [0,1]).
-      2) Local contrast normalization on L.
-      3) Build robust edge mask M from L (Sobel mag -> top percentile -> smooth).
-      4) Unsharp mask H = L - GaussianBlur(L).
-      5) Edge-only sharpening: L' = L + unsharp_amount * M_t * H, where M_t is temporally smoothed.
-      6) Recombine: scale RGB by (L' / (L + eps)) to preserve colors.
-      7) Clip and cast back to original dtype.
-
-    Args:
-        frames: np.ndarray of shape (T, H, W, 3). uint8 in [0,255] or float in [0,1].
-        lcn_sigma: Gaussian sigma for local stats window (larger -> more local adaptation).
-        edge_blur_sigma: pre-blur before Sobel (noise suppression).
-        edge_keep_top_pct: keep top X% edges for mask (10–20% typical).
-        edge_smooth_sigma: Gaussian sigma to soften the edge mask.
-        unsharp_sigma: Gaussian sigma for unsharp (1.0–2.0 typical).
-        unsharp_amount: amount of edge-only boost (0.4–1.0 typical).
-        temporal_alpha: EMA factor for mask (0=no smoothing, 1=no carry-over). 0.5–0.7 is gentle.
-
-    Returns:
-        Enhanced frames with the same shape and dtype as input.
-    """
-    assert frames.ndim == 4 and frames.shape[-1] == 3, "frames must be (T, H, W, 3)"
-    orig_dtype = frames.dtype
-
-    # to float32 [0,1]
-    if frames.dtype == np.uint8:
-        fr = frames.astype(np.float32) / 255.0
-    else:
-        fr = frames.astype(np.float32)
-        fr = np.clip(fr, 0.0, 1.0)
-
-    T, H, W, _ = fr.shape
-    out = np.empty_like(fr)
-
-    prev_M = None
-    eps = 1e-6
-
-    for t in range(T):
-        rgb = fr[t]
-
-        # 1) luminance
-        L = 0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]
-
-        # 2) local contrast normalization (CLAHE-like effect)
-        L_lcn = _local_contrast_normalize(L, win_sigma=lcn_sigma, eps=eps)
-
-        # 3) robust edge mask on normalized luminance
-        M = _edge_mask(L_lcn, grad_sigma=edge_blur_sigma,
-                       keep_top_pct=edge_keep_top_pct,
-                       smooth_sigma=edge_smooth_sigma)
-
-        # temporal EMA on M
-        if prev_M is None:
-            M_t = M
-        else:
-            M_t = temporal_alpha * M + (1.0 - temporal_alpha) * prev_M
-        prev_M = M_t
-
-        # 4) unsharp mask (on original luminance for natural look)
-        Hf = _unsharp(L, sigma=unsharp_sigma)
-
-        # 5) edge-only sharpening
-        Lp = L + unsharp_amount * M_t * Hf
-        Lp = np.clip(Lp, 0.0, 1.0)
-
-        # 6) recombine: scale RGB by luminance ratio
-        ratio = (Lp + eps) / (L + eps)
-        rgb_out = np.clip(rgb * ratio[..., None], 0.0, 1.0)
-
-        out[t] = rgb_out
-
-    # back to original dtype
-    if orig_dtype == np.uint8:
-        out = (out * 255.0 + 0.5).astype(np.uint8)
-    else:
-        out = out.astype(orig_dtype)
-
-    return out
-
 
 
 class ProcessingNode(ABC):
@@ -699,36 +571,26 @@ class ProcessingNode(ABC):
     
     def _query_vlm(
         self,
-        pose_status: str,
+        fast_mvt: bool,
+        hand_reference: str,
         orig_frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
         prompt: str,
-        show_imgs: bool = False,
         **fmt,
     ) -> str:
         """
         Query the VLM with cropped frames whose size is dependent on the
         resolution and a formatted prompt.
         """
-        if pose_status == HandStateStatus.ABSTAIN:
-            handedness = self.ctx.handedness
-            prompt = prompt.replace("hand", f"patient's {handedness} hand", 1)
+        fmt = {**fmt, "the_referred_hand": hand_reference}
         prompt = prompt.format(**fmt)
         cropped_frames = _get_cropped(frames=orig_frames, bboxes=bboxes)
-        ans = self.vlm.process_frames(cropped_frames, prompt)
-
-        if show_imgs and "no" in ans.lower():
-            from PIL import Image
-            img = Image.fromarray(cropped_frames[0])
-            img.show()
-
-        return ans
-
         return self.vlm.process_frames(cropped_frames, prompt)
 
     def run(
         self,
-        pose_status: str,
+        fast_mvt: bool,
+        hand_reference: str,
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[bool | str | int, Dict[str, Any]]:
@@ -739,8 +601,6 @@ class ProcessingNode(ABC):
         """
         ...
 
-        
-
 
 class GraspReleaseProcessingNode(ProcessingNode):
     """
@@ -749,41 +609,41 @@ class GraspReleaseProcessingNode(ProcessingNode):
     """
     GRASP_PROMPT = (
         "Target objects: {target_objects}\n\n"
-        "This chunk follows one where the hand was not holding any target objects. "
-        "Answer directly: 'Touch.' if the hand visibly touches a target object in this chunk "
-        "and the object being touched is visible; answer 'Not yet.' otherwise.\n"
+        "This chunk follows one where {the_referred_hand} was not holding any target object. "
+        "Does {the_referred_hand} make contact with a target object in this chunk? "
+        "Use "
 
-        "This chunk follows one where the hand was not holding anything. "
-        "Answer directly: 'Grasp.' if the hand visibly grasps an object in this chunk "
-        "and the object being grasped is visible; answer 'Not yet.' otherwise.\n"
-    )
-    WHICH_OBJECT_IN_CONTACT_PROMPT = (
-        "Target objects: {target_objects}\n\n"
-        "Which target object is the hand manipulating? "
-        "Answer directly (e.g. 'Fork.', 'Cup.'). ONLY RETURN ONE OBJECT! \n"
-    )
-    WHAT_COLOR_IS_THE_OBJECT_PROMPT = (
-        "What color is the {target_object}? Answer directly (e.g. 'Red.', 'Blue.', 'None.').\n"
-    )
-    RELEASE_PROMPT = (
-        "This chunk follows one where the hand was holding a(n) {target_object}. "
-        "Answer directly: 'Release.' if the hand lets go of it in this chunk; "
+        "Answer directly: 'Grasp.' if {the_referred_hand} grasps a target object in this chunk. "
+        ""
+
+        "Answer directly: 'Touch.' if {the_referred_hand} touches a target object in this chunk; "
         "answer 'Not yet.' otherwise.\n"
     )
 
-    RELEASE_CHECK1_PREV_LOC = (
-        "Is a(n) {target_object} visible? Answer 'Yes.' or 'No.' directly. "
-        # "Does anything in view look like it could be a(n) {target_object}? "
-        # "Answer only 'Yes.' or 'No.' "
-        # "The {target_object} may look blurry or be slightly out of frame. "
-        # "Further, it could blend in with its background. "
-        # "If you are not sure, answer 'Yes.'\n"
+    IDLE_PROMPT = (
+        "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
+        "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
+        "Answer 'IDLE' if it looks to be at rest, even if it is near an object. The hand can be "
+        "in the air. \n"
+        "(Active) {the_referred_hand} is moving with purpose — its fingers or wrist are tensed, changing position, "
+        "or interacting with an object through reaching, grasping, pressing, turning, adjusting, or squeezing."
     )
-    RELEASE_CHECK2_PREV_LOC = (
-        "Is the {target_object} being held? Answer 'Yes.' or 'No.' directly.\n"
+
+
+    WHICH_OBJECT_IN_CONTACT_PROMPT = (
+        "Target objects: {target_objects}\n\n"
+        "Which target object does {the_referred_hand} touch? "
+        "Answer directly (e.g. 'Fork.', 'Cup.'). ONLY RETURN ONE OBJECT! \n"
     )
-    RELEASE_CHECK3_CUR_LOC = (
-        "Is the hand holding a(n) {target_object}? Answer 'Yes.' or 'No.' directly.\n"
+    WHAT_COLOR_IS_THE_OBJECT_PROMPT = (
+        "What color is the {target_object}? "
+        "If you can't see, ignore the visual input and guess based on your prior knowledge. "
+        "Answer directly (e.g. 'Pink.', 'Blue.').\n"
+    )
+    RELEASE_PROMPT = (
+        "This chunk follows one where {the_referred_hand} was holding a(n) {target_object}. "
+        "Answer directly: 'Release.' if {the_referred_hand} lets go of it in this chunk; "
+        "answer 'Not yet.' otherwise.\n"
     )
 
     def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
@@ -793,15 +653,16 @@ class GraspReleaseProcessingNode(ProcessingNode):
 
     def _get_held_object(
         self,
-        pose_status: str,
+        fast_mvt: bool,
+        hand_reference: str,
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> str:
-        ans = self._query_vlm(pose_status, frames, bboxes, self.WHICH_OBJECT_IN_CONTACT_PROMPT, **self.fmt).strip().lower()
+        ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.WHICH_OBJECT_IN_CONTACT_PROMPT, **self.fmt).strip().lower()
         held_object = ''.join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
         if held_object != "":
             fmt = {**self.fmt, "target_object": held_object}
-            ans2 = self._query_vlm(pose_status, frames, bboxes, self.WHAT_COLOR_IS_THE_OBJECT_PROMPT, **fmt).strip().lower()
+            ans2 = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.WHAT_COLOR_IS_THE_OBJECT_PROMPT, **fmt).strip().lower()
             color = ''.join([ch for ch in ans2 if ch.isalpha() or ch.isspace()]).strip()
             if "none" not in color:
                 held_object = f"{color} {held_object}"
@@ -809,85 +670,34 @@ class GraspReleaseProcessingNode(ProcessingNode):
 
     def _release_check(
         self,
-        pose_status: str,
+        fast_mvt: bool,
+        hand_reference: str,
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[bool, str]:
         """Release check after 'release.' """
-        prev_loc_to_check = self.ctx.bboxes[0]
-        fmt = {**self.fmt, "target_object": self.ctx.held_object}
-        is_visible_ans = self._query_vlm(
-            pose_status, frames, [prev_loc_to_check for _ in range(len(frames))],
-            self.RELEASE_CHECK1_PREV_LOC, show_imgs=True, **fmt
-        ).lower()
-        if "yes" in is_visible_ans:
-            return True, f"Vis:{is_visible_ans}"
-        else:
-            return False, f"Vis:{is_visible_ans}"
-        if not self.ctx.bboxes:
-            return False, "N/A[no init]"  # No release unless there was a bbox previously
+        return True, "N/A"
 
-
-        prev_locs_to_check = [self.ctx.bboxes[0]]
-        # if pose_status != HandStateStatus.ABSTAIN:
-        #     # Perform further visibility checks (for small objects like comb and big objects like toilet paper roll)
-        #     pbbox = self.ctx.bboxes[0]
-        #     prev_bbox_center = (pbbox[0] + pbbox[2]) // 2, (pbbox[1] + pbbox[3]) // 2
-        #     prev_bbox_side = (pbbox[2] - pbbox[0])  # assume square
-
-        #     _, H, W, _ = frames.shape
-        #     half_bbox = _bbox_at_center_with_side(prev_bbox_center, prev_bbox_side // 2, W, H)
-        #     prev_locs_to_check.append(half_bbox)
-        #     double_bbox = _bbox_at_center_with_side(prev_bbox_center, prev_bbox_side * 2, W, H)
-        #     prev_locs_to_check.append(double_bbox)
-        if self.ctx.bboxes_last_ok and len(self.ctx.bboxes_last_ok) > 0:
-            prev_locs_to_check.append(self.ctx.bboxes_last_ok[0])
-        
-        fmt = {**self.fmt, "target_object": self.ctx.held_object}
-        for i, prev_loc_to_check in enumerate(prev_locs_to_check):
-            # Frame-wise checks
-            is_visible_ans = self._query_vlm(
-                pose_status, [frames[0]], [prev_loc_to_check],
-                self.RELEASE_CHECK1_PREV_LOC, **fmt
-            ).lower()
-
-            if "yes" in is_visible_ans:
-                held_by_hand_ans = self._query_vlm(
-                    pose_status, [frames[0]], [prev_loc_to_check],
-                    self.RELEASE_CHECK2_PREV_LOC, **fmt
-                ).lower()
-
-                if "no" in held_by_hand_ans:
-                    return True, f"{i}::{is_visible_ans}::{held_by_hand_ans}"
-                else:
-                    # Guard other hand holding via 
-                    return False, f"{i}::{is_visible_ans}::{held_by_hand_ans}"
-                    # hand_holding_ans = self._query_vlm(
-                    #     pose_status, [frames[0]], [bboxes[0]],
-                    #     self.RELEASE_CHECK3_CUR_LOC, **fmt
-                    # ).lower()
-                    # if "no" in hand_holding_ans:
-                    #     return True, f"{i}::{is_visible_ans}::{held_by_hand_ans}::{hand_holding_ans}"
-                    # else:
-                    #     return False, f"{i}::{is_visible_ans}::{held_by_hand_ans}::{hand_holding_ans}"
-        return False, ""
-            
     def run(
         self,
-        pose_status: str,
+        fast_mvt: bool,
+        hand_reference: str,
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
+        cur_idle = self.ctx.idle
+        if cur_idle:
+            return "", {"method": "GRP[IDLE]", "outputs": "N/A"}
+
         prev_contact = self.ctx.contact
         if prev_contact:
             held_obj = self.ctx.held_object
             fmt = {**self.fmt, "target_object": self.ctx.held_object}
-            ans = self._query_vlm(pose_status, frames, bboxes, self.RELEASE_PROMPT, **fmt).lower()
+            ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT, **fmt).lower()
 
-            # Check
             if "release" in ans:
                 released_verified, released_verified_info = self._release_check(
-                    pose_status, frames, bboxes
+                    fast_mvt, hand_reference, frames, bboxes
                 )
                 if released_verified:
                     held_obj = ""
@@ -897,30 +707,10 @@ class GraspReleaseProcessingNode(ProcessingNode):
                 held_obj,
                 {"method": "GRP[R]", "outputs": f"{held_obj} ({ans} | {released_verified_info})"}
             )
-            if "release" in ans:
-                # 1. The proper hand in view, either holding the object or not
-                # 2. Two hands in view, none holding the object, either holding, or both holding
-                # 3. No hands in view
-                # 4. Wrong hand in view, either holding the object or not
 
-                # Two checks:
-                # 1. On the proper hand: released? (works on case 4 and partially case 2)
-                # 2. On the object: released? (works on cases 1 and 3)
-                # If either is "no", then say release
-                released_verified, released_verified_info = self._release_check(
-                    pose_status, frames, bboxes
-                )
-                if released_verified:
-                    held_obj = ""
-            else:
-                released_verified_info = "N/A"
-            return (
-                held_obj,
-                {"method": "GRP[R]", "outputs": f"{held_obj} ({ans} | {released_verified_info})"}
-            )
         else:
-            ans = self._query_vlm(pose_status, frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
-            held_obj = self._get_held_object(pose_status, frames, bboxes) if "grasp" in ans else ""
+            ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
+            held_obj = self._get_held_object(fast_mvt, hand_reference, frames, bboxes) if "touch" in ans else ""
             return (
                 held_obj,
                 {"method": "GRP[G]", "outputs": f"{held_obj} ({ans})"}
@@ -934,68 +724,19 @@ class IdleProcessingNode(ProcessingNode):
     Stateless node object that *operates on *HandCtx* and returns the next idle state
     and info related to the decision.
     """
-    # PREV_IDLE_PROMPT = (
-    #     "This chunk follows one where the hand was idle (no purposeful motion or interaction). "
-    #     "Answer 'Idle.' only if it stays at rest with no intent to act, even when in front of or occluding an object. "
-    #     "Answer 'Active.' if it begins reaching, pre-shaping/tightening, contacting, or withdrawing with purpose. "
-    #     "Ignore small tremor.\n"
-    # )
-
-    # PREV_NOT_IDLE_PROMPT = (
-    #     "This chunk follows one where the hand was active (moving or interacting). "
-    #     "Answer 'Active.' only if purposeful motion or interaction continues. "
-    #     "Answer 'Idle.' if it comes to rest with no contact or intent, even when in front of or occluding an object. "
-    #     "Ignore small tremor.\n"
-    # )
-
-    # PREV_IDLE_PROMPT = (
-    #     "Is the hand idle (i.e. resting on a table or surface without intent "
-    #     "to grasp or release any objects)? Answer directly 'Idle.' if so or 'Active.' otherwise.\n"
-    # )
-    # PREV_NOT_IDLE_PROMPT = (
-    #     "Is the hand idle (i.e. resting on a table or surface without intent "
-    #     "to grasp or release any objects)? Answer directly 'Idle.' if so or 'Active.' otherwise.\n"
-    # )
-
-    # IDLE_PROMPT = (
-    #     "Is the hand idle in this clip? Answer only 'IDLE' or 'ACTIVE'. "
-    #     "(Idle) The hand is still or barely moving, and its fingers and wrist appear relaxed. "
-    #     # "Answer 'IDLE' if the fingers look like they are in a resting position, even if the hand is near an object."
-    #     "(Active) The hand is moving with purpose — its fingers or wrist are tensed, changing position, "
-    #     "or interacting with an object through reaching, grasping, pressing, turning, adjusting, or squeezing."
-    #     # "(Active) The hand is moving, moving toward contact, or touching/holding/pressing/turning/adjusting/interacting "
-    #     # "with an object. "
-    # )
     IDLE_PROMPT = (
-        "Is the hand idle in this clip? Answer only 'IDLE' or 'ACTIVE'. "
-        "(Idle) The hand is still or barely moving, and its fingers and wrist appear relaxed. "
-        "Answer 'IDLE' if the hand looks to be at rest, even if it is near an object."
-        "(Active) The hand is moving with purpose — its fingers or wrist are tensed, changing position, "
+        "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
+        "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
+        "Answer 'IDLE' if it looks to be at rest, even if it is near an object. The hand can be "
+        "in the air. \n"
+        "(Active) {the_referred_hand} is moving with purpose — its fingers or wrist are tensed, changing position, "
         "or interacting with an object through reaching, grasping, pressing, turning, adjusting, or squeezing."
-        # "(Active) The hand is moving, moving toward contact, or touching/holding/pressing/turning/adjusting/interacting "
-        # "with an object. "
-    )
-
-
-    # IDLE_PROMPT = (
-    #     "Does the hand become idle at the end of the clip? Answer only 'IDLE' or 'ACTIVE'. "
-    #     "(Idle) The hand is not moving much and its shape looks relaxed or resting. "
-    #     "It is not touching or manipulating any object; being near, in front of, or behind an object still counts as idle. "
-    #     "(Active) The hand is moving, moving toward contact, or touching/holding/pressing/turning/adjusting/interacting "
-    #     "with an object. "
-    # )
-    PREV_IDLE_PROMPT = (
-        # "The hand was detected to be idle in the beginning of this clip. " +
-        IDLE_PROMPT
-    )
-    PREV_NOT_IDLE_PROMPT = (
-        # "The hand was detected to be active in the beginning of this clip. " +
-        IDLE_PROMPT
     )
 
     def run(
         self,
-        pose_status: str,
+        fast_mvt: bool,
+        hand_reference: str,
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[bool, Dict[str, Any]]:
@@ -1003,20 +744,11 @@ class IdleProcessingNode(ProcessingNode):
         Execute this node:
         Returns: (cur_idle, info)
         """
-        prev_idle = self.ctx.idle
-
-        if pose_status == HandStateStatus.FAST_MOVEMENT:
-            return False, {"method": "IP[FAST]", "outputs": f"Idle: {prev_idle} -> False"}
-        prompt = self.PREV_IDLE_PROMPT if prev_idle else self.PREV_NOT_IDLE_PROMPT
-        ans = self._query_vlm(pose_status, frames, bboxes, prompt).lower()
+        if fast_mvt:
+            return False, {"method": "IP[FAST]", "outputs": "False (fast movement)"}
+        ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.IDLE_PROMPT, **self.fmt).lower()
         cur_idle = "idle" in ans
-        return (
-            cur_idle,
-            {
-                "method": "IP[PREV_IDLE]" if prev_idle else "IP[PREV_NOT_IDLE]",
-                "outputs": f"{cur_idle} ({ans})"
-            }
-        )
+        return cur_idle, {"method": "IP", "outputs": f"{cur_idle} ({ans})"}
 
 
 ####################################### INTERACTION SECTION #######################################
@@ -1054,7 +786,8 @@ class InteractionProcessingNode(ProcessingNode):
 
     def run(
         self,
-        pose_status: str,
+        fast_mvt: bool,
+        hand_reference: str,
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
@@ -1062,35 +795,39 @@ class InteractionProcessingNode(ProcessingNode):
         Execute this node:
         Returns: (cur_idle, info)
         """
-        prev_idle = self.ctx.idle
-        prev_interaction = self.ctx.interaction
-        cur_contact = self.ctx.contact
-        if not cur_contact:
-            return InteractionType.NONE, {"method": "TS[NC]", "outputs": "N/A"}
-        
-        # In contact, could be any of abstain, FAST, or ok
-        if pose_status == HandStateStatus.FAST_MOVEMENT:
+        if fast_mvt:
             return InteractionType.TRANSPORT, {"method": "TS[FAST]", "outputs": "transport"}
-        else:
-            prev_interaction_or_none = prev_interaction if prev_interaction != InteractionType.NONE else "none (the hand just made contact)"
-            ans = self._query_vlm(
-                pose_status,
-                frames,
-                bboxes,
-                self.TSPrompt,
-                target_object=self.ctx.held_object,
-                prev_interaction_or_none=prev_interaction_or_none
-            ).lower()
-            if "stabilize" in ans:
-                return (
-                    InteractionType.STABILIZE,
-                    {"method": "TS[P]", "outputs": f"Stabilize ({ans})"}
-                )
-            else:  # By default, we classify as transport if either 'Transport' or 'No interaction' is detected
-                return (
-                    InteractionType.TRANSPORT,
-                    {"method": "TS[P]", "outputs": f"Transport. ({ans})"}
-                )
+        return InteractionType.TRANSPORT, {"method": "TS[NC]", "outputs": "N/A"}
+
+        # prev_idle = self.ctx.idle
+        # prev_interaction = self.ctx.interaction
+        # cur_contact = self.ctx.contact
+        # if not cur_contact:
+        #     return InteractionType.NONE, {"method": "TS[NC]", "outputs": "N/A"}
+        
+        # # In contact, could be any of abstain, FAST, or ok
+        # if hand_reference == HandStateStatus.FAST_MOVEMENT:
+        #     return InteractionType.TRANSPORT, {"method": "TS[FAST]", "outputs": "transport"}
+        # else:
+        #     prev_interaction_or_none = prev_interaction if prev_interaction != InteractionType.NONE else "none (the hand just made contact)"
+        #     ans = self._query_vlm(fast_mvt, 
+        #         hand_reference,
+        #         frames,
+        #         bboxes,
+        #         self.TSPrompt,
+        #         target_object=self.ctx.held_object,
+        #         prev_interaction_or_none=prev_interaction_or_none
+        #     ).lower()
+        #     if "stabilize" in ans:
+        #         return (
+        #             InteractionType.STABILIZE,
+        #             {"method": "TS[P]", "outputs": f"Stabilize ({ans})"}
+        #         )
+        #     else:  # By default, we classify as transport if either 'Transport' or 'No interaction' is detected
+        #         return (
+        #             InteractionType.TRANSPORT,
+        #             {"method": "TS[P]", "outputs": f"Transport. ({ans})"}
+        #         )
 
 
 ####################################### ORCHESTRATION SECTION #######################################
@@ -1118,59 +855,29 @@ class HandStateMachine:
     def step(
         self, chunk: VideoChunk
     ) -> Tuple[str, List[bool], Optional[str], Dict[str, Any]]:
-        
-        # # If the bboxes are the same size, we can concatenate the frames
-        # # We expect the chunk generator to generate bboxes of the same shape within each chunk
-        # # We only have to check the first bboxes of each chunk
-        # if _bboxes_are_compatible(self.ctx.bboxes, chunk.bboxes):
-        #     prev_and_cur_frames_224 = np.concatenate([self.ctx.frames, chunk.frames], axis=0)
-        #     prev_and_cur_bboxes_224 = self.ctx.bboxes + chunk.bboxes
-        # else:
-        #     prev_and_cur_frames_224 = chunk.frames
-        #     prev_and_cur_bboxes_224 = chunk.bboxes
+        """Processing order matters."""
 
-        # CONTACT
+        idle, idle_info = self.ipn.run(
+            chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
+        )
+        self.ctx.idle = idle
+
         held_obj, held_obj_info = self.grpn.run(
-            chunk.pose_status, chunk.frames, chunk.bboxes
+            chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
         )
         self.ctx.held_object = held_obj
 
-        # IDLE
-        # IDLE visual prompt
-        # If prev = ABSTAIN or cur = ABSTAIN, use full frame
-        # If cur = FAST, not IDLE
-        # If cur = OK, use current bbox
-        if self.ctx.status == HandStateStatus.ABSTAIN:
-            bbox = self.ctx.bboxes[-1]  # full frame
-        elif chunk.pose_status == HandStateStatus.ABSTAIN:
-            bbox = chunk.bboxes[-1]     # full frame
-        elif chunk.pose_status == HandStateStatus.FAST_MOVEMENT:
-            bbox = chunk.bboxes[-1]     # does not matter
-        else:  # OK
-            bbox = chunk.bboxes[0]      # current bbox
-        if self.ctx.frames is not None and len(self.ctx.frames) > 0:
-            frames_for_idle = np.concatenate([self.ctx.frames, chunk.frames], axis=0)
-        else:
-            frames_for_idle = chunk.frames
-        # bboxes = [bbox for _ in range(len(frames_for_idle))]
-        # idle, idle_info = self.ipn.run(chunk.pose_status, frames_for_idle, bboxes)
-        idle, idle_info = self.ipn.run(chunk.pose_status, chunk.frames, chunk.bboxes)
-        self.ctx.idle = idle
+        # Interaction
+        interaction, interaction_info = self.tspn.run(
+            chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
+        )
+        self.ctx.interaction = interaction
 
-        # # INTERACTION (transport/stabilize/none)
-        # interaction, interaction_info = self.tspn.run(chunk.pose_status, chunk.frames, chunk.bboxes)
-        # self.ctx.interaction = interaction
-        self.ctx.interaction = InteractionType.NONE
-
-        self.ctx.status = chunk.pose_status
+        self.ctx.fast_mvt = chunk.fast_mvt
+        self.ctx.hand_reference = chunk.hand_reference
         self.ctx.frames = chunk.frames
         self.ctx.bboxes = chunk.bboxes
-        if chunk.pose_status == HandStateStatus.OK:
-            self.ctx.bboxes_last_ok = chunk.bboxes
 
-        # if self.ctx.contact:
-        #     pred = interaction  # either transport or stabilize
-        # else:
         if idle:
             pred = HandPrimitives.IDLE
         else:
@@ -1186,7 +893,7 @@ class HandStateMachine:
             "held_object": held_obj,
             "idle_info": str(idle_info),
             "held_obj_info": str(held_obj_info),
-            # "interaction_info": str(interaction_info)
+            "interaction_info": str(interaction_info)
         }
         return pred, info
 
@@ -1266,10 +973,10 @@ def predict_with_state_machine(
     ):
 
         kp = hand_locator.process_frames(frames)
-        pose_status, boxes = hand_cropper.process_frames(frames, handedness, kp, bbox_side=224)
-
+        fast_mvt, hand_reference, boxes = hand_cropper.process_frames(frames, handedness, kp, bbox_side=224)
         chunk = VideoChunk(
-            pose_status=pose_status,
+            fast_mvt=fast_mvt,
+            hand_reference=hand_reference,
             frames=frames,
             bboxes=boxes,
             start_t=start_t,
@@ -1279,7 +986,7 @@ def predict_with_state_machine(
 
         num_frames = len(frames)
         times.extend(np.linspace(start_t, end_t, num_frames, endpoint=False).tolist())
-        info["status"] = [pose_status] * num_frames
+        info["status"] = [hand_reference] * num_frames
         info["prim"] = [prim] * num_frames
         info["kps_wrist"] = [kp[handedness]["wrist"][i] for i in range(num_frames)]
         info["kps_elbow"] = [kp[handedness]["elbow"][i] for i in range(num_frames)]
@@ -1288,7 +995,6 @@ def predict_with_state_machine(
         info["kps_wrist_other"] = [kp[other]["wrist"][i] for i in range(num_frames)]
         info["kps_elbow_other"] = [kp[other]["elbow"][i] for i in range(num_frames)]
         info["kps_hand_other"] = [kp[other]["hand"][i] for i in range(num_frames)]
-
         info["bboxes"] = [boxes[i] for i in range(num_frames)]
         for key in info:
             if key not in infos:
@@ -1299,12 +1005,14 @@ def predict_with_state_machine(
                 infos[key].extend([info[key]] * num_frames)
 
         # eval_logger.info(
-        #     f"{start_t:.2f}-{end_t:.2f}s | {pose_status} | {prim} | {info['held_object']} | {info['idle_info']} | {info['held_obj_info']} | {info['interaction_info']}"
+        #     f"{start_t:.2f}-{end_t:.2f}s | {hand_reference} | {prim} | {info['held_object']} | {info['idle_info']} | {info['held_obj_info']} | {info['interaction_info']}"
         # )
-        print(f"{start_t:.2f}-{end_t:.2f}s | {info['held_obj_info']}")
-        # print(
-        #     f"{start_t:.2f}-{end_t:.2f}s | {pose_status} | {prim} | {info['held_object']} | {info['idle_info']} | {info['held_obj_info']} | {info['interaction_info']}"
-        # )
+        print(
+            f"{start_t:.2f}-{end_t:.2f}s | {prim} \n"
+            f"\t Cropper info: {fast_mvt} | {hand_reference} ||| IP info: {info['idle_info']}\n"
+            f"\t GRP info: {info['held_object']} | {info['held_obj_info']}"
+            # f"\t TS info: {info['interaction_info']}\n"
+        )
 
     unprocessed_prims = infos["prim"]
     N = len(unprocessed_prims)
