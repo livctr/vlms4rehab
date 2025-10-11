@@ -597,7 +597,7 @@ class HandCropper:
         return moving_crop, ref_text, crop_boxes
 
 
-####################################### GRASP/RELEASE SECTION #######################################
+####################################### IDLE SECTION #######################################
 
 def _get_cropped(
     frames: np.ndarray, bboxes: List[Tuple[int, int, int, int]]
@@ -654,6 +654,42 @@ class ProcessingNode(ABC):
         ...
 
 
+class IdleProcessingNode(ProcessingNode):
+    """
+    Stateless node object that *operates on *HandCtx* and returns the next idle state
+    and info related to the decision.
+    """
+    IDLE_PROMPT = (
+        "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
+        "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
+        "Answer 'IDLE' if the hand looks to be at rest without holding an object, "
+        "even if it is near an object or in the air. \n"
+        "(Active) {the_referred_hand} is moving with purpose — its fingers or wrist are tensed, changing position, "
+        "or interacting with an object through reaching, grasping, pressing, turning, adjusting, squeezing, or holding. "
+        "If the hand looks like it is holding an object, answer 'ACTIVE'."
+    )
+
+    def run(
+        self,
+        fast_mvt: bool,
+        hand_reference: str,
+        frames: np.ndarray,
+        bboxes: List[Tuple[int, int, int, int]],
+    ) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Execute this node:
+        Returns: (cur_idle, info)
+        """
+        if fast_mvt:
+            return False, {"method": "IP[FAST]", "outputs": "False (fast movement)"}
+        ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.IDLE_PROMPT, **self.fmt).lower()
+        cur_idle = "idle" in ans
+        return cur_idle, {"method": "IP", "outputs": f"{cur_idle} ({ans})"}
+
+
+
+####################################### GRASP/RELEASE SECTION #######################################
+
 class GraspReleaseProcessingNode(ProcessingNode):
     """
     Stateless node object that *operates on* HandContactCtx and returns the next contact
@@ -665,17 +701,7 @@ class GraspReleaseProcessingNode(ProcessingNode):
         "Question: Does {the_referred_hand} actively make contact with a target object in this clip? "
         "If so, either answer with the name of the object (e.g. 'Fork.', 'Cup.'). "
         "Otherwise, answer 'Not yet.' (e.g. if the hand is just resting on the object rather than supporting it)."
-        # "Now, observe whether it makes contact with or closes around any target object. "
-        # "Focus on hand-shape cues indicating grasping, especially finger curl/closure, "
-        # "thumb opposition, and pinch or power-grip shape. Further, if you need to distinguish between "
-        # "'deodorant cap' and 'deodorant tube', or 'water bottle cap' and 'water bottle', use the relative "
-        # "positioning of the hand to make your choice (e.g. the higher hand is likely to be in contact with "
-        # "the cap if the water bottle is upright). \n\n"
-        # "Question: Which target object does {the_referred_hand} make contact with?\n"
-        # "Answer directly with only one of the target object names (e.g. 'Fork.', 'Cup.') or 'Not yet.' "
-        # "if contact has not been made by the end of this clip.\n"
     )
-
     RELEASE_PROMPT = (
         "This clip follows one where {the_referred_hand} was holding a(n) {target_object}. "
         "Answer directly: 'Yes.' if the hand lets go of it in this chunk and the {target_object} is visible; "
@@ -688,75 +714,10 @@ class GraspReleaseProcessingNode(ProcessingNode):
         "Is the {target_object} being held by a hand? Answer 'Yes.' or 'No.' directly.\n"
     )
 
-    # RELEASE_PROMPT = (
-    #     "This clip follows one where {the_referred_hand} was detected to grasp a(n) {target_object}. "
-    #     "Answer directly: 'Released.' if the hand lets go of it in this clip and the {target_object} is "
-    #     "visible; answer 'No.' otherwise. \n"
-    #     # "For small objects, answer 'Not yet.' until the hand looks like it is setting the object down "
-    #     # "(e.g. on a surface)."
-    # )
-    # RELEASE_CHECK_1_PREV_LOC = (
-    #     "Is a(n) {target_object} visible? Answer 'Yes.' or 'No.' directly.\n"
-    # )
-    # RELEASE_CHECK_2_CUR_LOC = (
-    #     "Is the {the_referred_hand} holding a(n) {target_object}? Answer 'Yes.' or 'No.' directly.\n"
-    # )
-
-    # RELEASE_PROMPT = (
-    #     "This clip follows one where {the_referred_hand} was detected to hold a(n) {target_object}. "
-    #     "It can be holding a different object now. "
-    #     "Question: Does {the_referred_hand} release an object in this clip? "
-    #     "Answer 'Released.' if {the_referred_hand} looks like it is moving away from the object, "
-    #     "the fingers pull away from the object, or the hand opens up. "
-    #     "Otherwise, answer 'Not yet.' "
-    # #     "If {the_referred_hand} looks like it is still holding or transporting the object, answer 'Not yet.' "
-    # #     # "For small object (e.g. deodorant cap, comb, glasses, fork, knife, water bottle cap, toothpaste, toothbrush), "
-    # #     # "answer 'Not yet.' if the hand looks like it is still transporting the object. "
-    # #     # "In fast-moving scenes (e.g. we're tracking the hand) or for small objects "
-    # #     # "that can be hard to see due to camouflage, motion blur, or occlusion "
-    # #     # "(e.g. deodorant cap, comb, glasses, fork, knife, water bottle cap, toothpaste, toothbrush), "
-    # #     # "answer 'Release.' if until the hand looks like it is setting the object down (e.g. on a surface) "
-    # #     # "or letting go. "
-    # #     # "For large objects (e.g. bread, cup, deodorant tube, faucet handle, margarine, "
-    # #     # "paper plate, re-sealable plastic bag, toilet paper roll, tub, washcloth, water bottle) or situations "
-    # #     # "where the object is at least partially visible, be more confident in answering 'Released.'"
-    # #     "Question: Has {the_referred_hand} released the {target_object}? \n"
-    # #     "Answer: 'Released.' or 'Not yet.'\n"
-    # )
-
-    # WHICH_OBJECT_IN_CONTACT_PROMPT = (
-    #     "Target objects: {target_objects}\n\n"
-    #     "Focus specifically on {the_referred_hand}. "
-    #     "Question: which target object is {the_referred_hand} holding/manipulating/moving/grasping? "
-    #     "If the hand is only resting on the object (e.g. the fingers and wrist appear relaxed), "
-    #     "that does not count as a grasp. "
-    #     "If the hand looks like it is transporting an object but the object is unclear, "
-    #     "just answer 'Object.' "
-    #     "If the hand looks like it is not interacting with any object at all, answer 'None.' "
-    #     "Answer directly with only one of the target object names (e.g. 'Fork.', 'Cup.') or 'Object.' or 'None.'"
-    # )
-
     def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
         super().__init__(ctx, vlm, **fmt)
         if "target_objects" not in self.fmt:
             raise ValueError("target_objects must be provided in fmt for ContactStateNode")
-
-    def _get_held_object(
-        self,
-        fast_mvt: bool,
-        hand_reference: str,
-        frames: np.ndarray,
-        bboxes: List[Tuple[int, int, int, int]],
-    ) -> str:
-        ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.WHICH_OBJECT_IN_CONTACT_PROMPT, **self.fmt).strip().lower()
-        held_object = ''.join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
-        if held_object != "":
-            fmt = {**self.fmt, "target_object": held_object}
-            ans2 = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.WHAT_COLOR_IS_THE_OBJECT_PROMPT, **fmt).strip().lower()
-            color = ''.join([ch for ch in ans2 if ch.isalpha() or ch.isspace()]).strip()
-            if "none" not in color:
-                held_object = f"{color} {held_object}"
-        return held_object
 
     def _release_check(
         self,
@@ -790,17 +751,6 @@ class GraspReleaseProcessingNode(ProcessingNode):
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
-        # ans = self._query_vlm(
-        #     fast_mvt, hand_reference, frames, bboxes, self.WHICH_OBJECT_IN_CONTACT_PROMPT, **self.fmt
-        # ).lower()
-        # held_obj = ''.join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
-        # if held_obj == "" or "none" in held_obj:
-        #     held_obj = ""
-        # return (
-        #     held_obj,
-        #     {"method": "GRP[W]", "outputs": f"{held_obj} ({ans})"}
-        # )
-
         cur_idle = self.ctx.idle
         if cur_idle:
             return "", {"method": "GRP[IDLE]", "outputs": "N/A"}
@@ -829,52 +779,6 @@ class GraspReleaseProcessingNode(ProcessingNode):
                 held_obj, {"method": "GRP[R]", "outputs": f"Held ({released} | {released_checked_info})"}
             )
 
-
-            # which_obj = self._query_vlm(
-            #     fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT_1, **self.fmt
-            # ).lower()
-            # which_obj = "".join([ch for ch in which_obj if ch.isalpha() or ch.isspace()]).strip()
-            # if which_obj == "" or "none" in which_obj:
-            #     # Not visible. Abstain from making a decision (use the previous held object).
-            #     released = "N/A"
-            # else:
-            #     fmt = {**self.fmt, "target_object": which_obj}
-            #     released = self._query_vlm(
-            #         fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT_2, **fmt
-            #     ).lower()
-            #     released = "".join([ch for ch in released if ch.isalpha() or ch.isspace()]).strip()
-            #     if "release" in released:
-            #         held_obj = ""
-            #     else:
-            #         held_obj = which_obj  # Update held object to the newly identified one
-            # return (
-            #     held_obj,
-            #     {"method": "GRP[R]", "outputs": f"{held_obj} ({which_obj} | {released})"}
-            # )
-
-
-            # fmt = {**self.fmt, "target_object": self.ctx.held_object}
-            # ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.RELEASE_PROMPT, **fmt).lower()
-            # ans2, ans3 = "N/A", "N/A"
-            # if "release" in ans:
-            #     held_obj = ""
-            # else:
-            #     # Could be a missed detection
-            #     prev_bboxes = self.ctx.bboxes
-            #     ans2 = self._query_vlm(
-            #         fast_mvt, hand_reference, frames, prev_bboxes, self.RELEASE_CHECK_1_PREV_LOC, **fmt
-            #     ).lower()
-            #     if "yes" in ans2:
-            #         ans3 = self._query_vlm(
-            #             fast_mvt, hand_reference, frames, bboxes, self.RELEASE_CHECK_2_CUR_LOC, **fmt
-            #         ).lower()
-            #         if "no" in ans3:
-            #             held_obj = ""
-            # return (
-            #     held_obj,
-            #     {"method": "GRP[R]", "outputs": f"{held_obj} ({ans} | {ans2} | {ans3}). "}
-            # )
-
         else:
             ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
             if "not yet" in ans:
@@ -885,41 +789,6 @@ class GraspReleaseProcessingNode(ProcessingNode):
                 held_obj,
                 {"method": "GRP[G]", "outputs": f"{held_obj} ({ans})"}
             )
-
-
-####################################### IDLE SECTION #######################################
-
-class IdleProcessingNode(ProcessingNode):
-    """
-    Stateless node object that *operates on *HandCtx* and returns the next idle state
-    and info related to the decision.
-    """
-    IDLE_PROMPT = (
-        "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
-        "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
-        "Answer 'IDLE' if the hand looks to be at rest without holding an object, "
-        "even if it is near an object or in the air. \n"
-        "(Active) {the_referred_hand} is moving with purpose — its fingers or wrist are tensed, changing position, "
-        "or interacting with an object through reaching, grasping, pressing, turning, adjusting, squeezing, or holding. "
-        "If the hand looks like it is holding an object, answer 'ACTIVE'."
-    )
-
-    def run(
-        self,
-        fast_mvt: bool,
-        hand_reference: str,
-        frames: np.ndarray,
-        bboxes: List[Tuple[int, int, int, int]],
-    ) -> Tuple[bool, Dict[str, Any]]:
-        """
-        Execute this node:
-        Returns: (cur_idle, info)
-        """
-        if fast_mvt:
-            return False, {"method": "IP[FAST]", "outputs": "False (fast movement)"}
-        ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.IDLE_PROMPT, **self.fmt).lower()
-        cur_idle = "idle" in ans
-        return cur_idle, {"method": "IP", "outputs": f"{cur_idle} ({ans})"}
 
 
 ####################################### INTERACTION SECTION #######################################
@@ -969,36 +838,6 @@ class InteractionProcessingNode(ProcessingNode):
         if fast_mvt:
             return InteractionType.TRANSPORT, {"method": "TS[FAST]", "outputs": "transport"}
         return InteractionType.TRANSPORT, {"method": "TS[NC]", "outputs": "N/A"}
-
-        # prev_idle = self.ctx.idle
-        # prev_interaction = self.ctx.interaction
-        # cur_contact = self.ctx.contact
-        # if not cur_contact:
-        #     return InteractionType.NONE, {"method": "TS[NC]", "outputs": "N/A"}
-        
-        # # In contact, could be any of abstain, FAST, or ok
-        # if hand_reference == HandStateStatus.FAST_MOVEMENT:
-        #     return InteractionType.TRANSPORT, {"method": "TS[FAST]", "outputs": "transport"}
-        # else:
-        #     prev_interaction_or_none = prev_interaction if prev_interaction != InteractionType.NONE else "none (the hand just made contact)"
-        #     ans = self._query_vlm(fast_mvt, 
-        #         hand_reference,
-        #         frames,
-        #         bboxes,
-        #         self.TSPrompt,
-        #         target_object=self.ctx.held_object,
-        #         prev_interaction_or_none=prev_interaction_or_none
-        #     ).lower()
-        #     if "stabilize" in ans:
-        #         return (
-        #             InteractionType.STABILIZE,
-        #             {"method": "TS[P]", "outputs": f"Stabilize ({ans})"}
-        #         )
-        #     else:  # By default, we classify as transport if either 'Transport' or 'No interaction' is detected
-        #         return (
-        #             InteractionType.TRANSPORT,
-        #             {"method": "TS[P]", "outputs": f"Transport. ({ans})"}
-        #         )
 
 
 ####################################### ORCHESTRATION SECTION #######################################
@@ -1053,7 +892,7 @@ class HandStateMachine:
             pred = HandPrimitives.IDLE
         else:
             if self.ctx.contact:
-                pred = HandPrimitives.TRANSPORT  # or stabilize, but we do not distinguish yet
+                pred = interaction
             else:
                 pred = HandPrimitives.MOVE  # or reposition, but we do not distinguish yet
 
@@ -1098,7 +937,7 @@ def predict_with_state_machine(
     handedness: str,
     vlm: VLMProtocol,
     pose_stream: Pose2DStream,
-    max_frames_num: int = 4,
+    chunk_max_frames: int = 4,
     sampling_strategy: str = "dense",
     overlap_frames_num: int = 0,
     sampling_fps: int = 15,
@@ -1111,7 +950,7 @@ def predict_with_state_machine(
         handedness: "left" | "right", which hand to track
         vlm: the vision-language model that implements VLMProtocol
         pose_stream: the 2D pose predictor
-        max_frames_num: number of frames per chunk
+        chunk_max_frames: number of frames per chunk
         sampling_strategy: "dense" | "uniform"
         overlap_frames_num: number of overlapping frames between chunks (only for "dense"). Keep at 0.
         sampling_fps: fps to sample the video at
@@ -1135,7 +974,7 @@ def predict_with_state_machine(
 
     for frames, start_t, end_t in load_long_video_decord(
         video_path,
-        max_frames_num=max_frames_num,
+        max_frames_num=chunk_max_frames,
         sampling_strategy=sampling_strategy,
         overlap_frames_num=overlap_frames_num,
         sampling_fps=sampling_fps,
@@ -1158,7 +997,7 @@ def predict_with_state_machine(
         num_frames = len(frames)
         times.extend(np.linspace(start_t, end_t, num_frames, endpoint=False).tolist())
         info["status"] = [hand_reference] * num_frames
-        info["prim"] = [prim] * num_frames
+        info["raw_prims"] = [prim] * num_frames
         info["kps_wrist"] = [kp[handedness]["wrist"][i] for i in range(num_frames)]
         info["kps_elbow"] = [kp[handedness]["elbow"][i] for i in range(num_frames)]
         info["kps_hand"] = [kp[handedness]["hand"][i] for i in range(num_frames)]
@@ -1185,40 +1024,37 @@ def predict_with_state_machine(
             # f"\t TS info: {info['interaction_info']}\n"
         )
 
-    unprocessed_prims = infos["prim"]
-    N = len(unprocessed_prims)
-    idles = [unprocessed_prims[i] == HandPrimitives.IDLE for i in range(N)]
-    contacts = [(unprocessed_prims[i] == HandPrimitives.TRANSPORT) or (unprocessed_prims[i] == HandPrimitives.STABILIZE) for i in range(N)]
+        # -------- Postprocessing -------
 
-    # -------- Postprocessing -------
+    idles: List[bool] = infos['idle']
+    contacts: List[bool] = infos['contact']
+    interactions: List[InteractionType] = infos['interaction']
+    assert len(infos["raw_prims"]) == len(idles) == len(contacts) == len(interactions)
+    N = len(infos["raw_prims"])
 
-    # 1) Set idle, reach, and reposition to UNK.
-    prims = [prim if contact else "UNK" for prim, contact in zip(unprocessed_prims, contacts)]
+    # Smooth lists
+    def _smooth_list(lst: List, chunk_size: int) -> List:
+        for i in range(chunk_size, N - chunk_size, chunk_size):
+            prev_window = lst[i - chunk_size]
+            next_window = lst[i + chunk_size]
+            if (prev_window == next_window) and (lst[i] != prev_window):
+                for j in range(i, i + chunk_size):
+                    lst[j] = prev_window
+    _smooth_list(idles, chunk_max_frames)
+    _smooth_list(contacts, chunk_max_frames)
+    _smooth_list(interactions, chunk_max_frames)
 
-    # 2) Verify the idle: we need at least `num_frames_for_idle` consecutive frames to declare an idle.
-    #    Set idle.
-    num_prev_idle = [0] * N
-    num_prev_idle[0] = 1 if idles[0] else 0
-    for i in range(1, N):
-        if idles[i]:
-            num_prev_idle[i] = num_prev_idle[i-1] + 1
-        else:
-            num_prev_idle[i] = 0
-    verified_idles = [0] * N
-    j = N - 1
-    while j >= 0:
-        if num_prev_idle[j] >= num_frames_for_idle:
-            for k in range(j, j - num_prev_idle[j], -1):
-                verified_idles[k] = 1
-            j -= num_prev_idle[j]
-        else:
-            j -= 1
+    # 1) Start w/ empty list. First, fill in idle (priority). Then, the contact
+    #    classes (transport, stabilize) with `interaction.`
+    #    At the end of this step, prims contains "idle", "transport", "stabilize", and "UNK".
+    prims = ["UNK"] * N
+    prims = [HandPrimitives.IDLE if idle else prim for idle, prim in zip(idles, prims)]
     prims = [
-        HandPrimitives.IDLE if (not contact and verified_idle) else prim
-        for prim, verified_idle, contact in zip(prims, verified_idles, contacts)
+        interaction if prim == "UNK" and contact else prim
+        for interaction, contact, prim in zip(interactions, contacts, prims)
     ]
 
-    # 3) Determine between reach, reposition, and reposition-reach
+    # 2) Determine between reach, reposition, and reposition-reach
     contact_in_future = [False] * N
     contact_state = False
     for i in range(N - 1, -1, -1):
@@ -1250,7 +1086,7 @@ def predict_with_state_machine(
                 prims[i] = HandPrimitives.REPOSITION
             elif not contact_in_past[i]:
                 prims[i] = HandPrimitives.REACH
-    # The list is now "idle", "reach", "reposition", "transport", and "UNK"
+    # The list is now "idle", "reach", "reposition", "transport", "stabilize", and "UNK"
     # Still UNK? Must be reposition-reach
     # Fill in UNK spans with reposition-reach
     i = 0
@@ -1276,7 +1112,7 @@ def predict_with_state_machine(
 
     # 4) Smooth out quick idles -> contacts and contacts -> idles 
     # with a reach/reposition
-    side = max_frames_num // 2
+    side = chunk_max_frames // 2
     for i in range(1, N):
         if prims[i-1] == HandPrimitives.IDLE and prims[i] == HandPrimitives.TRANSPORT:
             for j in range(max(0, i-side), min(N, i+side)):
