@@ -360,6 +360,7 @@ class HandCropper:
         *,
         use_cropping_strategy: bool = True,
         kp_conf_thresh: float = 0.9,
+        other_hand_in_view_conf_thresh: float = 0.5,  # not used
         moving_tracklet_thresh: int = 12,
     ):
         """
@@ -380,10 +381,12 @@ class HandCropper:
             use_cropping_strategy: If False, always return full-frame crops.
             kp_conf_thresh: Confidence threshold for hand keypoints.
             moving_tracklet_thresh: Movement threshold in pixels per frame for deciding “moving”.
+            other_hand_in_view_conf_thresh: Confidence threshold for the other hand being in view.
         """
         self.use_cropping_strategy = bool(use_cropping_strategy)
         self.kp_conf_thresh = float(kp_conf_thresh)
         self.moving_tracklet_thresh = int(moving_tracklet_thresh)
+        self.other_hand_in_view_conf_thresh = float(other_hand_in_view_conf_thresh)
 
     def clear(self) -> None:
         pass
@@ -406,48 +409,49 @@ class HandCropper:
             full = [0, 0, int(W), int(H)]
             crop_boxes = [full for _ in range(T)]
             should_infer, moving_tracklet = True, False
-
-        if handedness == "left":
-            hand_kps, other_kps = (kps.left.hand, kps.right.hand)
         else:
-            hand_kps, other_kps = (kps.right.hand, kps.left.hand)
-
-        cur_first = hand_kps[0]
-        cur_last = hand_kps[-1]
-        cur_confs = [kp[2] for kp in hand_kps]
-
-        # --- Step 1: Crop computation ---
-        if not all(conf >= self.kp_conf_thresh for conf in cur_confs):
-            full = [0, 0, int(W), int(H)]
-            crop_boxes = [full for _ in range(T)]
-            should_infer, moving_tracklet = False, False
-        else:
-            dist = max(abs(cur_last[0] - cur_first[0]), abs(cur_last[1] - cur_first[1]))
-            fast_mvt = (dist >= self.moving_tracklet_thresh * max(1, (T - 1)))
-            if fast_mvt:  # Do a moving crop if movement is fast
-                crop_boxes = [
-                    _bbox_at_center_with_side(
-                        (
-                            (1 - alpha) * cur_first[0] + alpha * cur_last[0],
-                            (1 - alpha) * cur_first[1] + alpha * cur_last[1],
-                        ),
-                        side=bbox_side,
-                        W=W,
-                        H=H,
-                    )
-                    for alpha in (i / (T - 1) if T > 1 else 0.0 for i in range(T))
-                ]
+            # Try to crop if confident. Choices: moving crop, still crop, and no crop
+            if handedness == "left":
+                hand_kps, other_kps = (kps.left.hand, kps.right.hand)
             else:
-                mid = ((cur_first[0] + cur_last[0]) / 2.0, (cur_first[1] + cur_last[1]) / 2.0)
-                box = _bbox_at_center_with_side(mid, side=bbox_side, W=W, H=H)
-                crop_boxes = [box for _ in range(T)]
-            should_infer, moving_tracklet = True, fast_mvt
+                hand_kps, other_kps = (kps.right.hand, kps.left.hand)
+
+            cur_first = hand_kps[0]
+            cur_last = hand_kps[-1]
+            cur_confs = [kp[2] for kp in hand_kps]
+
+            # --- Step 1: Crop computation ---
+            if not all(conf >= self.kp_conf_thresh for conf in cur_confs):
+                full = [0, 0, int(W), int(H)]
+                crop_boxes = [full for _ in range(T)]
+                should_infer, moving_tracklet = False, False
+            else:
+                dist = max(abs(cur_last[0] - cur_first[0]), abs(cur_last[1] - cur_first[1]))
+                fast_mvt = (dist >= self.moving_tracklet_thresh * max(1, (T - 1)))
+                if fast_mvt:  # Do a moving crop if movement is fast
+                    crop_boxes = [
+                        _bbox_at_center_with_side(
+                            (
+                                (1 - alpha) * cur_first[0] + alpha * cur_last[0],
+                                (1 - alpha) * cur_first[1] + alpha * cur_last[1],
+                            ),
+                            side=bbox_side,
+                            W=W,
+                            H=H,
+                        )
+                        for alpha in (i / (T - 1) if T > 1 else 0.0 for i in range(T))
+                    ]
+                else:
+                    mid = ((cur_first[0] + cur_last[0]) / 2.0, (cur_first[1] + cur_last[1]) / 2.0)
+                    box = _bbox_at_center_with_side(mid, side=bbox_side, W=W, H=H)
+                    crop_boxes = [box for _ in range(T)]
+                should_infer, moving_tracklet = True, fast_mvt
 
         # --- Step 2: Is the other hand ever in view? ---
         other_hand_in_view = False
         for hand_kp, crop_box in zip(other_kps, crop_boxes):
             if (
-                hand_kp[2] >= self.kp_conf_thresh and \
+                hand_kp[2] >= self.other_hand_in_view_conf_thresh and \
                 _bbox_contains_points(crop_box, ((hand_kp[0], hand_kp[1]),))
             ):
                 other_hand_in_view = True
