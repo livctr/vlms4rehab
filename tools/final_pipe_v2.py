@@ -81,6 +81,7 @@ import json
 from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 import numpy as np
+import cv2
 
 from lmms_eval.models.model_utils.load_video import load_long_video_decord
 from tools.ultralytics_pose import Pose2DStream
@@ -113,6 +114,7 @@ class VideoChunk:
     bboxes: List[Tuple[int, int, int, int]]
     start_t: float
     end_t: float
+    pose_usable: bool = True
 
 
 @dataclass
@@ -130,6 +132,9 @@ class HandCtx:
     held_object: str = ""  # Assume the hand can hold only one object at a time.
     idle: bool = True
     interaction: str = InteractionType.NONE  # "transport" | "stabilize" | ""
+
+    # Runtime context
+    sampling_fps: int = 30
 
     # Frames and hand location of the previous chunk.
     frames: np.ndarray = field(default_factory=lambda: np.zeros((0, 224, 224, 3), dtype=np.uint8))
@@ -635,8 +640,27 @@ class ProcessingNode(ABC):
         resolution and a formatted prompt.
         """
         fmt = {**fmt, "the_referred_hand": hand_reference}
+        # Prefer answering for the current chunk even if previous context is provided
+        fmt.setdefault("answer_scope_note", "Answer for the CURRENT chunk only.")
         prompt = prompt.format(**fmt)
-        cropped_frames = _get_cropped(frames=orig_frames, bboxes=bboxes)
+
+        # Include previous chunk context if the crop sizes match to reduce flicker
+        use_prev = False
+        if isinstance(self.ctx.frames, np.ndarray) and len(self.ctx.frames) > 0:
+            try:
+                use_prev = _bboxes_are_compatible(self.ctx.bboxes, bboxes)
+            except Exception:
+                use_prev = False
+
+        if use_prev:
+            prev_frames = self.ctx.frames
+            prev_boxes = self.ctx.bboxes
+            frames_cat = np.concatenate([prev_frames, orig_frames], axis=0)
+            bboxes_cat = list(prev_boxes) + list(bboxes)
+            cropped_frames = _get_cropped(frames=frames_cat, bboxes=bboxes_cat)
+        else:
+            cropped_frames = _get_cropped(frames=orig_frames, bboxes=bboxes)
+
         return self.vlm.process_frames(cropped_frames, prompt)
 
     def run(
@@ -659,7 +683,11 @@ class IdleProcessingNode(ProcessingNode):
     Stateless node object that *operates on *HandCtx* and returns the next idle state
     and info related to the decision.
     """
+    # Motion-based idle detector with optional VLM fallback
+    MOTION_IDLE_THRESH = 4.0  # tuned at 30 FPS; scaled by (30 / sampling_fps)
+    BORDERLINE_MARGIN = 0.75  # if close to threshold, we may fallback to VLM
     IDLE_PROMPT = (
+        "{answer_scope_note}\n"
         "Is {the_referred_hand} idle in this clip? Answer only 'IDLE' or 'ACTIVE'. \n"
         "(Idle) {the_referred_hand} is still or barely moving, and its fingers and wrist appear relaxed. "
         "Answer 'IDLE' if the hand looks to be at rest without holding an object, "
@@ -668,6 +696,15 @@ class IdleProcessingNode(ProcessingNode):
         "or interacting with an object through reaching, grasping, pressing, turning, adjusting, squeezing, or holding. "
         "If the hand looks like it is holding an object, answer 'ACTIVE'."
     )
+
+    @staticmethod
+    def _motion_score(frames: np.ndarray, bboxes: List[Tuple[int, int, int, int]]) -> float:
+        roi = _get_cropped(frames, bboxes)
+        if roi.shape[0] <= 1:
+            return 0.0
+        gray = np.stack([cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in roi], axis=0)
+        diffs = np.abs(np.diff(gray.astype(np.float32), axis=0))  # (T-1,H,W)
+        return float(np.mean(diffs))
 
     def run(
         self,
@@ -682,9 +719,19 @@ class IdleProcessingNode(ProcessingNode):
         """
         if fast_mvt:
             return False, {"method": "IP[FAST]", "outputs": "False (fast movement)"}
+
+        m = self._motion_score(frames, bboxes)
+        fps = max(1, int(getattr(self.ctx, "sampling_fps", 30)))
+        thr = self.MOTION_IDLE_THRESH * (30.0 / float(fps))
+        if m < thr * self.BORDERLINE_MARGIN:
+            return True, {"method": "IP[MOTION]", "outputs": f"True (m={m:.2f})"}
+        if m > thr / self.BORDERLINE_MARGIN:
+            return False, {"method": "IP[MOTION]", "outputs": f"False (m={m:.2f})"}
+
+        # borderline → ask VLM as tie-breaker
         ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.IDLE_PROMPT, **self.fmt).lower()
         cur_idle = "idle" in ans
-        return cur_idle, {"method": "IP", "outputs": f"{cur_idle} ({ans})"}
+        return cur_idle, {"method": "IP[MIXED]", "outputs": f"{cur_idle} (m={m:.2f}; {ans})"}
 
 
 
@@ -712,6 +759,12 @@ class GraspReleaseProcessingNode(ProcessingNode):
     )
     RELEASE_CHECK_2_PROMPT = (
         "Is the {target_object} being held by a hand? Answer 'Yes.' or 'No.' directly.\n"
+    )
+
+    VISIBILITY_ANY_PROMPT = (
+        "{answer_scope_note}\n"
+        "Are any of the following target objects visible in this clip? {target_objects} "
+        "Answer 'Yes.' or 'No.' directly."
     )
 
     def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
@@ -743,6 +796,33 @@ class GraspReleaseProcessingNode(ProcessingNode):
             ans2 = "N/A"
         release_confirmed = ("yes" in ans1) and ("no" in ans2)
         return release_confirmed, f"Checked released ({ans1} | {ans2})"
+
+    def _visibility_gate(
+        self,
+        fast_mvt: bool,
+        hand_reference: str,
+        frames: np.ndarray,
+        bboxes: List[Tuple[int, int, int, int]],
+    ) -> Tuple[bool, str]:
+        """Ask visibility at two ROI scales (112 and 224)."""
+        HINT = {"target_objects": self.fmt.get("target_objects", "")}
+        # 224
+        ans_224 = self._query_vlm(
+            fast_mvt, hand_reference, frames, bboxes, self.VISIBILITY_ANY_PROMPT, **HINT
+        ).strip().lower()
+        # 112
+        bboxes_112 = []
+        for (x1, y1, x2, y2) in bboxes:
+            cx = (x1 + x2) * 0.5
+            cy = (y1 + y2) * 0.5
+            side = 112
+            bx1, by1, bx2, by2 = _bbox_at_center_with_side((cx, cy), side=side, W=frames.shape[2], H=frames.shape[1])
+            bboxes_112.append((bx1, by1, bx2, by2))
+        ans_112 = self._query_vlm(
+            fast_mvt, hand_reference, frames, bboxes_112, self.VISIBILITY_ANY_PROMPT, **HINT
+        ).strip().lower()
+        visible = ("yes" in ans_112) or ("yes" in ans_224)
+        return visible, f"VIS 112={ans_112} | 224={ans_224}"
 
     def run(
         self,
@@ -780,6 +860,11 @@ class GraspReleaseProcessingNode(ProcessingNode):
             )
 
         else:
+            # Multi-scale visibility gate to avoid flicker and false positives on tiny objects
+            visible, vis_info = self._visibility_gate(fast_mvt, hand_reference, frames, bboxes)
+            if not visible:
+                return "", {"method": "GRP[G][VIS:NO]", "outputs": vis_info}
+
             ans = self._query_vlm(fast_mvt, hand_reference, frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
             if "not yet" in ans:
                 held_obj = ""
@@ -787,7 +872,7 @@ class GraspReleaseProcessingNode(ProcessingNode):
                 held_obj = "".join([ch for ch in ans if ch.isalpha() or ch.isspace()]).strip()
             return (
                 held_obj,
-                {"method": "GRP[G]", "outputs": f"{held_obj} ({ans})"}
+                {"method": "GRP[G]", "outputs": f"{held_obj} ({ans}) | {vis_info}"}
             )
 
 
@@ -824,6 +909,17 @@ class InteractionProcessingNode(ProcessingNode):
         "What best describes the hand's interaction with the {target_object} in this chunk? Answer with a single word only."
     )
 
+    STABILIZE_MOTION_THRESH = 3.0  # tuned at 30 FPS; scaled by (30 / sampling_fps)
+
+    @staticmethod
+    def _motion_score(frames: np.ndarray, bboxes: List[Tuple[int, int, int, int]]) -> float:
+        roi = _get_cropped(frames, bboxes)
+        if roi.shape[0] <= 1:
+            return 0.0
+        gray = np.stack([cv2.cvtColor(f, cv2.COLOR_RGB2GRAY) for f in roi], axis=0)
+        diffs = np.abs(np.diff(gray.astype(np.float32), axis=0))
+        return float(np.mean(diffs))
+
     def run(
         self,
         fast_mvt: bool,
@@ -837,7 +933,18 @@ class InteractionProcessingNode(ProcessingNode):
         """
         if fast_mvt:
             return InteractionType.TRANSPORT, {"method": "TS[FAST]", "outputs": "transport"}
-        return InteractionType.TRANSPORT, {"method": "TS[NC]", "outputs": "N/A"}
+
+        # If contact is present, prefer a simple motion rule for stabilize
+        if self.ctx.contact:
+            m = self._motion_score(frames, bboxes)
+            fps = max(1, int(getattr(self.ctx, "sampling_fps", 30)))
+            thr = self.STABILIZE_MOTION_THRESH * (30.0 / float(fps))
+            if m <= thr:
+                return InteractionType.STABILIZE, {"method": "TS[MOTION]", "outputs": f"stabilize (m={m:.2f})"}
+            return InteractionType.TRANSPORT, {"method": "TS[MOTION]", "outputs": f"transport (m={m:.2f})"}
+
+        # No contact: interaction undefined → return NONE
+        return InteractionType.NONE, {"method": "TS[NC]", "outputs": "no contact"}
 
 
 ####################################### ORCHESTRATION SECTION #######################################
@@ -867,21 +974,27 @@ class HandStateMachine:
     ) -> Tuple[str, List[bool], Optional[str], Dict[str, Any]]:
         """Processing order matters."""
 
-        idle, idle_info = self.ipn.run(
-            chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
-        )
-        self.ctx.idle = idle
+        # Abstain: if pose is unusable, repeat previous states
+        if not chunk.pose_usable:
+            idle, idle_info = self.ctx.idle, {"method": "IP[ABSTAIN]", "outputs": "repeat prev"}
+            held_obj, held_obj_info = self.ctx.held_object, {"method": "GRP[ABSTAIN]", "outputs": "repeat prev"}
+            interaction, interaction_info = self.ctx.interaction, {"method": "TS[ABSTAIN]", "outputs": "repeat prev"}
+        else:
+            idle, idle_info = self.ipn.run(
+                chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
+            )
+            self.ctx.idle = idle
 
-        held_obj, held_obj_info = self.grpn.run(
-            chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
-        )
-        self.ctx.held_object = held_obj
+            held_obj, held_obj_info = self.grpn.run(
+                chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
+            )
+            self.ctx.held_object = held_obj
 
-        # Interaction
-        interaction, interaction_info = self.tspn.run(
-            chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
-        )
-        self.ctx.interaction = interaction
+            # Interaction
+            interaction, interaction_info = self.tspn.run(
+                chunk.fast_mvt, chunk.hand_reference, chunk.frames, chunk.bboxes
+            )
+            self.ctx.interaction = interaction
 
         self.ctx.fast_mvt = chunk.fast_mvt
         self.ctx.hand_reference = chunk.hand_reference
@@ -940,7 +1053,7 @@ def predict_with_state_machine(
     chunk_max_frames: int = 4,
     sampling_strategy: str = "dense",
     overlap_frames_num: int = 0,
-    sampling_fps: int = 15,
+    sampling_fps: int = 30,
     num_frames_for_idle: int = 4,
     min_frames_for_reach_reposition: int = 8,
 ) -> Tuple[List[str], List[float], Dict[str, Any]]:
@@ -965,6 +1078,7 @@ def predict_with_state_machine(
 
     target_objects = _get_target_objects(video_path)
     machine = HandStateMachine(handedness=handedness, vlm=vlm, target_objects=target_objects)
+    machine.ctx.sampling_fps = int(sampling_fps)
     hand_locator = HandLocator(pose_stream, vlm)
     hand_cropper = HandCropper(kp_conf_thresh=0.90, fast_movement_thresh=8)
     hand_locator.clear()
@@ -984,6 +1098,8 @@ def predict_with_state_machine(
 
         kp = hand_locator.process_frames(frames)
         fast_mvt, hand_reference, boxes = hand_cropper.process_frames(frames, handedness, kp, bbox_side=224)
+        # Determine pose usability (both first and last confident)
+        cur_first, cur_last, cur_ok, _, _ = _get_first_last_conf(kp, handedness, hand_cropper.kp_conf_thresh)
         chunk = VideoChunk(
             fast_mvt=fast_mvt,
             hand_reference=hand_reference,
@@ -991,6 +1107,7 @@ def predict_with_state_machine(
             bboxes=boxes,
             start_t=start_t,
             end_t=end_t,
+            pose_usable=bool(cur_ok),
         )
         prim, info = machine.step(chunk)
 
@@ -1020,8 +1137,8 @@ def predict_with_state_machine(
         print(
             f"{start_t:.2f}-{end_t:.2f}s | {prim} \n"
             f"\t Cropper info: {fast_mvt} | {hand_reference} ||| IP info: {info['idle_info']}\n"
-            f"\t GRP info: {info['held_object']} | {info['held_obj_info']}"
-            # f"\t TS info: {info['interaction_info']}\n"
+            f"\t GRP info: {info['held_object']} | {info['held_obj_info']}\n"
+            f"\t TS info: {info['interaction_info']}"
         )
 
         # -------- Postprocessing -------
