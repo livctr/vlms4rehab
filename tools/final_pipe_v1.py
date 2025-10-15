@@ -585,6 +585,26 @@ class GraspReleaseProcessingNode(ProcessingNode):
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
+        # Basic contact mode: simplify to yes/no with optional previous-contact context
+        if self.fmt.get("basic_contact", False):
+            prev_contact = self.ctx.contact
+            tgt = self.fmt.get("target_objects", "")
+            if prev_contact:
+                prompt = (
+                    "Previous window had contact. Question: Is there contact in this window (with these target objects)? Yes or no.\n"
+                    f"Target objects: {tgt}\n"
+                )
+            else:
+                prompt = (
+                    "Is there contact (with these target objects)? Yes or no.\n"
+                    f"Target objects: {tgt}\n"
+                )
+            ans = self._query_vlm(frames, bboxes, prompt, **self.fmt).strip().lower()
+            if "yes" in ans:
+                # Placeholder object to mark contact in downstream logic
+                return "object", {"method": "GRP[BASIC]", "outputs": f"Yes ({ans})"}
+            return "", {"method": "GRP[BASIC]", "outputs": f"No ({ans})"}
+
         prev_contact = self.ctx.contact
         if prev_contact:
             fmt = {**self.fmt, "target_object": self.ctx.held_object}
@@ -665,6 +685,9 @@ class IdleProcessingNode(ProcessingNode):
         "(i.e. it was moving and/or interacting with an object). "
         "Answer directly: 'Active' if the hand remains active in this chunk; answer 'Idle.' otherwise.\n"
     )
+    BASIC_IDLE_PROMPT = (
+        "Is the patient's {handedness} hand idle? Answer 'Yes.' or 'No.' directly.\n"
+    )
 
     def run(
         self,
@@ -676,6 +699,13 @@ class IdleProcessingNode(ProcessingNode):
         Execute this node:
         Returns: (cur_idle, info)
         """
+        # Basic idle mode: always query simplified yes/no prompt, independent of contact
+        if self.fmt.get("basic_idle", False):
+            handed = self.ctx.handedness.lower()
+            ans = self._query_vlm(frames, bboxes, self.BASIC_IDLE_PROMPT, handedness=handed).lower()
+            cur_idle = ("yes" in ans)
+            return cur_idle, {"method": "[BASIC_IDLE]", "outputs": f"{cur_idle}. Ans: {ans}"}
+
         prev_idle = self.ctx.idle
         cur_contact = self.ctx.contact
         if pose_status == HandStateStatus.ABSTAIN:
@@ -798,9 +828,19 @@ class HandStateMachine:
     def __init__(self, *, handedness: str, vlm: VLMProtocol, target_objects: str = ""):
         self.ctx = HandCtx(handedness=handedness)
         self.target_objects = target_objects
+        # Flags can be provided later via set_modes
+        self.basic_idle = False
+        self.basic_contact = False
         self.grpn = GraspReleaseProcessingNode(self.ctx, vlm, target_objects=target_objects)
         self.ipn  = IdleProcessingNode(self.ctx, vlm, target_objects=target_objects)
         self.tspn = InteractionProcessingNode(self.ctx, vlm, target_objects=target_objects)
+
+    def set_modes(self, *, basic_idle: bool = False, basic_contact: bool = False) -> None:
+        self.basic_idle = bool(basic_idle)
+        self.basic_contact = bool(basic_contact)
+        # propagate to node formatting kwarg bags
+        self.grpn.fmt["basic_contact"] = self.basic_contact
+        self.ipn.fmt["basic_idle"] = self.basic_idle
 
     def step(
         self, chunk: VideoChunk
@@ -846,7 +886,12 @@ class HandStateMachine:
             "held_object": held_obj,
             "idle_info": str(idle_info),
             "held_obj_info": str(held_obj_info),
-            "interaction_info": str(interaction_info)
+            "interaction_info": str(interaction_info),
+            # boolean states per-chunk for downstream logging/eval
+            "idle_bool": bool(self.ctx.idle),
+            "contact_bool": bool(self.ctx.contact),
+            "basic_idle_used": bool(getattr(self, "basic_idle", False)),
+            "basic_contact_used": bool(getattr(self, "basic_contact", False)),
         }
         return pred, info
 
@@ -886,6 +931,9 @@ def predict_with_state_machine(
     sampling_fps: int = 15,
     num_frames_for_idle: int = 4,
     min_frames_for_reach_reposition: int = 8,
+    *,
+    basic_idle: bool = False,
+    basic_contact: bool = False,
 ) -> Tuple[List[str], List[float], Dict[str, Any]]:
     """
     Arguments:
@@ -908,6 +956,8 @@ def predict_with_state_machine(
 
     target_objects = _get_target_objects(video_path)
     machine = HandStateMachine(handedness=handedness, vlm=vlm, target_objects=target_objects)
+    if basic_idle or basic_contact:
+        machine.set_modes(basic_idle=basic_idle, basic_contact=basic_contact)
     hand_locator = HandLocator(pose_stream, vlm)
     hand_cropper = HandCropper(
         kp_conf_thresh=0.90, fast_movement_thresh=8, interpolation="mixed"

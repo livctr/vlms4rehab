@@ -54,6 +54,8 @@ class PoseVLMPipeline(lmms):
         sampling_strategy: str = "uniform",
         sampling_fps: int = 8,
         overlap_frames_num: int = 0,
+        basic_idle: bool = False,
+        basic_contact: bool = False,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -95,6 +97,9 @@ class PoseVLMPipeline(lmms):
         self._config = self.model.config
         self.batch_size_per_gpu = int(batch_size)
         self.use_cache = use_cache
+        # Basic modes for state machine prompting
+        self.basic_idle = bool(basic_idle)
+        self.basic_contact = bool(basic_contact)
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [
@@ -238,7 +243,13 @@ class PoseVLMPipeline(lmms):
                 video_path,
                 hand,
                 self,
-                self.pose_streamer
+                self.pose_streamer,
+                max_frames_num=4,
+                sampling_strategy="dense",
+                overlap_frames_num=0,
+                sampling_fps=15,
+                basic_idle=self.basic_idle,
+                basic_contact=self.basic_contact,
             )
             # Add one more timestamp
             times.append(times[-1] + (times[-1] - times[-2]) if len(times) > 1 else 1.0)

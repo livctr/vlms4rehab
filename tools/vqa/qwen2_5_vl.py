@@ -45,7 +45,7 @@ class Qwen2_5_VL_VQA:
         sampling_strategy: str = "uniform",
         sampling_fps: int = 8,
         overlap_frames_num: int = 0,
-        cache_dir: Optional[str] = ".cache",
+        cache_dir: Optional[str] = "/gpfs/data/schambralab/quantitativeRehabilitation/__lab_member_homes/naveen/final_pipeline/the_pipeline/strokerehab/strokerehab/organized_pipeline/hf_home",
         **kwargs,
     ) -> None:
         super().__init__()
