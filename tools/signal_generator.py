@@ -405,17 +405,19 @@ class HandCropper:
         Returns: CropperFromPoseOutput
         """
         T, H, W, _ = frames.shape
+        
+        # Get hand keypoints for both hands
+        if handedness == "left":
+            hand_kps, other_kps = (kps.left.hand, kps.right.hand)
+        else:
+            hand_kps, other_kps = (kps.right.hand, kps.left.hand)
+        
         if not self.use_cropping_strategy:
             full = [0, 0, int(W), int(H)]
             crop_boxes = [full for _ in range(T)]
             should_infer, moving_tracklet = True, False
         else:
             # Try to crop if confident. Choices: moving crop, still crop, and no crop
-            if handedness == "left":
-                hand_kps, other_kps = (kps.left.hand, kps.right.hand)
-            else:
-                hand_kps, other_kps = (kps.right.hand, kps.left.hand)
-
             cur_first = hand_kps[0]
             cur_last = hand_kps[-1]
             cur_confs = [kp[2] for kp in hand_kps]
@@ -518,6 +520,7 @@ class ProcessingNode(ABC):
 
 
 IDLE_PROMPT_METHODS = ("SMC", "Idle", "StatefulIdleFromPred", "StatefulIdleFromGT", "Focus")
+CONTACT_PROMPT_METHODS = ("SMC", "Basic", "StatefulContactFromPred", "StatefulContactFromGT")
 
 class IdleProcessingNode(ProcessingNode):
     """
@@ -589,6 +592,64 @@ class IdleProcessingNode(ProcessingNode):
         return NodeOutput(output=cur_idle, info={"prompt": prompt, "raw_answer": ans})
 
 
+class ContactProcessingNode(ProcessingNode):
+    """
+    Stateless node object that *operates on *HandCtx* and returns the next contact state
+    and info related to the decision.
+    """
+    SMC_CONTACT_PROMPT = (
+        "Focus on the patient's {handedness} hand. Is it actively grasping or holding an object? "
+        "Answer YES or NO.\n\n"
+    )
+    BASIC_CONTACT_PROMPT = (
+        "Is the patient's {handedness} hand in contact with a target object? "
+        "{target_objects} Answer 'Yes.' or 'No.' directly.\n"
+    )
+    STATEFUL_CONTACT_PROMPT = (
+        "This clip follows one where the patient's {handedness} hand was {prev_contact_str}. "
+        "Is the patient's {handedness} hand in contact with a target object? "
+        "{target_objects} Answer 'Yes.' or 'No.' directly."
+    )
+
+    def __init__(self, prompt_method: str, ctx: HandCtx, vlm: VLMProtocol, **fmt):
+        assert prompt_method in CONTACT_PROMPT_METHODS
+        if prompt_method == "SMC":
+            self.prompt = self.SMC_CONTACT_PROMPT
+        elif "StatefulContact" in prompt_method:
+            self.prompt = self.STATEFUL_CONTACT_PROMPT
+        else:
+            self.prompt = self.BASIC_CONTACT_PROMPT
+        self.prompt_method = prompt_method
+        super().__init__(ctx, vlm, **fmt)
+
+    def run(
+        self,
+        should_infer: bool,
+        frames: np.ndarray,
+        bboxes: List[Tuple[int, int, int, int]],
+    ) -> NodeOutput:
+        """
+        Execute this node:
+        Returns: (cur_contact, info)
+        """
+        if self.prompt_method == "StatefulContactFromGT":
+            prev_contact = self.ctx.prev_gt_contact
+        else:
+            prev_contact = self.ctx.prev_pred_contact
+        prev_contact_str = 'IN CONTACT' if prev_contact else 'NOT IN CONTACT'
+        fmt = {**self.fmt, "handedness": self.ctx.handedness, "prev_contact_str": prev_contact_str}
+        prompt = self.prompt.format(**fmt)
+
+        ans = self._query_vlm(should_infer, frames, bboxes, prompt)
+
+        if self.prompt_method == "SMC":
+            cur_contact = "yes" in ans.lower()
+        else:
+            cur_contact = "yes" in ans.lower()
+
+        return NodeOutput(output=cur_contact, info={"prompt": prompt, "raw_answer": ans})
+
+
 ####################################### ORCHESTRATION SECTION #######################################
 
 
@@ -613,7 +674,14 @@ class HandStateMachine:
                 target_objects=target_objects,
             )
         
-        # TODO contact_prompt_methods
+        self.cpns: Dict[str, ContactProcessingNode] = {}
+        for contact_method in contact_prompt_methods:
+            self.cpns[contact_method] = ContactProcessingNode(
+                prompt_method=contact_method,
+                ctx=self.ctx,
+                vlm=vlm,
+                target_objects=target_objects,
+            )
 
     def step(
         self, chunk: VideoChunk, include_prompt_info: bool = True
@@ -628,23 +696,34 @@ class HandStateMachine:
                 chunk.frames,
                 chunk.bboxes,
             )
-        # TODO contact
+        
+        contacts: Dict[str, NodeOutput] = {}
+        for method, cpn in self.cpns.items():
+            contacts[method] = cpn.run(
+                chunk.should_infer,
+                chunk.frames,
+                chunk.bboxes,
+            )
 
         # Update state
-        self.ctx.prev_pred_idle = idles["StatefulIdleFromPred"].output
-        self.ctx.prev_pred_contact = None  # TODO
+        self.ctx.prev_pred_idle = idles.get("StatefulIdleFromPred", NodeOutput(True, {})).output
+        self.ctx.prev_pred_contact = contacts.get("StatefulContactFromPred", NodeOutput(False, {})).output
         self.ctx.prev_gt_idle = chunk.gt_idle
         self.ctx.prev_gt_contact = chunk.gt_contact
         self.ctx.prev_frames = chunk.frames
         self.ctx.prev_bboxes = chunk.bboxes
 
         info = {
-            **{idle_method: idles[idle_method].output for idle_method in IDLE_PROMPT_METHODS},
+            **{idle_method: idles[idle_method].output for idle_method in idles.keys()},
+            **{contact_method: contacts[contact_method].output for contact_method in contacts.keys()},
         }
 
         if include_prompt_info:
             info.update({
-                idle_method + "_info": str(idles[idle_method].info) for idle_method in IDLE_PROMPT_METHODS
+                idle_method + "_info": str(idles[idle_method].info) for idle_method in idles.keys()
+            })
+            info.update({
+                contact_method + "_info": str(contacts[contact_method].info) for contact_method in contacts.keys()
             })
         return info
 
@@ -684,7 +763,7 @@ def predict_with_state_machine(
     sampling_fps: int = 15,
     include_prompt_info_in_df: bool = False,
     idle_prompt_methods: Iterable[str] = IDLE_PROMPT_METHODS,
-    contact_prompt_methods: Iterable[str] = (),
+    contact_prompt_methods: Iterable[str] = CONTACT_PROMPT_METHODS,
     crop_methods: Iterable[str] = ("window", "tracklet"),
 ) -> pd.DataFrame:
     """
