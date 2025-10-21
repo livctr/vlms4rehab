@@ -163,7 +163,7 @@ class PrimitiveLabelUtils:
         """
         df = pd.read_csv(path)
         times = df['Time_s'].tolist()
-        markers = df['MarkerNames']
+        markers = df['MarkerNames'].astype(str)
 
         # infer handedness if needed
         if handedness not in ('left','right'):
