@@ -85,6 +85,9 @@ deactivate_all_conda_envs() {
   done
 }
 
+cd "$(pwd)"
+conda init  # in case
+
 
 if [ -z "$CUDA_VISIBLE_DEVICES" ]; then
     gpu_count=$(nvidia-smi --query-gpu=index --format=csv,noheader | wc -l)
@@ -152,73 +155,48 @@ for model in "${models[@]}"; do
 
         deactivate_all_conda_envs
 
-        wandb_project=""
+        benchmark="$task"
+        output_path="${log_path}/${task}"
+        wandb_project="$task"
         case "$task" in
         "strokerehab_movements")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=1,overlap_frames_num=0"
-            wandb_project="$task"
             ;;
         "strokerehab_primitives"*)
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=15,overlap_frames_num=0"
-            wandb_project="$task"
             ;;
         "strokerehab_ia1_3_30")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=uniform"
-            wandb_project="$task"
             ;;
         "strokerehab_ia1_31_33")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
-            wandb_project="$task"
             ;;
         "strokerehab_ia2_3_30")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=uniform"
-            wandb_project="$task"
             ;;
         "strokerehab_ia2_31_33")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
-            wandb_project="$task"
             ;;
         "strokerehab_ia3_3_30")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=uniform"
-            wandb_project="$task"
             ;;
         "strokerehab_ia3_31_33")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
-            wandb_project="$task"
             ;;
         "strokerehab_ia4_3_30")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=uniform"
-            wandb_project="$task"
             ;;
         "strokerehab_ia4_31_33")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=dense,sampling_fps=30,overlap_frames_num=0"
-            wandb_project="$task"
             ;;
         "strokerehab_describe")
-            benchmark="$task"
-            output_path="${log_path}/${task}"
             model_task_args=",sampling_strategy=uniform"
-            wandb_project="$task"
+            ;;
+        "strokerehab_identification"*)
+            model_task_args=",sampling_strategy=uniform"
+            ;;
+        "strokerehab_counting")
+            model_task_args=",sampling_strategy=dense,sampling_fps=15,overlap_frames_num=0"
             ;;
         *)
             echo "Unknown task: $task"
@@ -341,9 +319,15 @@ for model in "${models[@]}"; do
             model_args="pretrained=Efficient-Large-Model/NVILA-15B,video_decode_backend=decord,conv_template=auto,max_frames_num=8"
             num_processes=1
             ;;
-        "pose_vlm_pipeline")
+        "qwen2_5_vl_prim")
             conda activate cvfm4rehab
-            model_family="pose_vlm_pipeline"
+            model_family="qwen2_5_vl_prim"
+            model_args=""
+            num_processes=1
+            ;;
+        "qwen2_5_vl_signal_generator")
+            conda activate cvfm4rehab
+            model_family="qwen2_5_vl_signal_generator"
             model_args=""
             num_processes=1
             ;;

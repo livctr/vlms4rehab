@@ -31,11 +31,11 @@ except ImportError:
     eval_logger.warning("Failed to import qwen_vl_utils; Please install it via `pip install qwen-vl-utils`")
 
 from tools.ultralytics_pose import Pose2DStream
-from tools.final_pipe_v1 import predict_with_state_machine
+from tools.final_pipe_v3 import predict_with_state_machine
 
 
-@register_model("pose_vlm_pipeline")
-class PoseVLMPipeline(lmms):
+@register_model("qwen2_5_vl_prim")
+class Qwen2_5_VL_PRIM(lmms):
     """
     Code copied from Qwen2.5_VL Model
     """
@@ -54,6 +54,8 @@ class PoseVLMPipeline(lmms):
         sampling_strategy: str = "uniform",
         sampling_fps: int = 8,
         overlap_frames_num: int = 0,
+        do_crop: bool = True,
+        do_postprocess: bool = True,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -95,6 +97,9 @@ class PoseVLMPipeline(lmms):
         self._config = self.model.config
         self.batch_size_per_gpu = int(batch_size)
         self.use_cache = use_cache
+
+        self.do_crop = do_crop
+        self.do_postprocess = do_postprocess
 
         if accelerator.num_processes > 1:
             assert accelerator.distributed_type in [
@@ -238,7 +243,9 @@ class PoseVLMPipeline(lmms):
                 video_path,
                 hand,
                 self,
-                self.pose_streamer
+                self.pose_streamer,
+                do_crop=self.do_crop,
+                do_postprocess=self.do_postprocess,
             )
             # Add one more timestamp
             times.append(times[-1] + (times[-1] - times[-2]) if len(times) > 1 else 1.0)
