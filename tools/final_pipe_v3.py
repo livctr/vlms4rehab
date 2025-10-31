@@ -1,6 +1,6 @@
 """
 Conditional Prompting and Cropping Logic specifically designed for
-RTT and shelf tasks.
+RTT and shelf tasks. Custom prompts and post-processing.
 """
 
 from __future__ import annotations
@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 import numpy as np
 
 from lmms_eval.models.model_utils.load_video import load_long_video_decord
-from lmms_eval.tasks.strokerehab.utils_primitives import _convert_motion_contact_to_primitives
 from tools.ultralytics_pose import Pose2DStream
 from loguru import logger as eval_logger
 
@@ -21,23 +20,27 @@ from loguru import logger as eval_logger
 
 
 class HandStateStatus:
-    OK_NO_MVT     = "OK [NO MVT]"
-    OK            = "OK"
-    ABSTAIN       = "ABSTAIN"
-    FAST_MOVEMENT = "FAST MOVEMENT"
+    """Pose model and cropping status."""
+    ABSTAIN       = "ABSTAIN"       # ABSTAIN due to low confidence
+    OK_NO_MVT     = "OK [NO MVT]"   # OK, minimal motion
+    OK            = "OK"            # OK, some motion
+    FAST_MOVEMENT = "FAST MOVEMENT" # FAST MOVEMENT detected
 
 
-class MovingState:
-    STATIONARY    = "stationary"
-    MOVING        = "moving"
+class IdleState:
+    """Idle vs. all."""
+    IDLE          = "idle"
+    ACTIVE        = "active"
 
 
 class GraspState:
+    """Transport/stabilize v. reach/reposition."""
     EMPTY         = "empty"
     HOLDING       = "holding"
 
 
 class InteractionState:
+    """Transport v. stabilize. (reach v. reposition are figured out in post-processing)."""
     TRANSPORT     = "transport"
     STABILIZE     = "stabilize"
 
@@ -57,10 +60,10 @@ class HandCtx:
     The hand state that moves through the nodes.
     """
     handedness: str  # "left" | "right"
-    pose_status: str = HandStateStatus.OK  # "OK" | "ABSTAIN" | "FAST MOVEMENT"
-    moving_status: str = MovingState.STATIONARY  # "stationary" | "moving"
-    grasp_status: str = GraspState.EMPTY  # "empty" | "holding"
-    interaction_status: str = InteractionState.TRANSPORT  # "transport" | "stabilize"
+    pose_status: str        = HandStateStatus.OK
+    idle_status: str        = IdleState.IDLE
+    grasp_status: str       = GraspState.EMPTY
+    interaction_status: str = InteractionState.TRANSPORT
 
     frames: np.ndarray = field(default_factory=lambda: np.empty((0,)))
     bboxes: List[Tuple[int, int, int, int]] = field(default_factory=list)
@@ -162,7 +165,8 @@ class HandLocator:
         stream: Optional[Pose2DStream],
         vqa_model: Optional[VLMProtocol],
         *,
-        hand_wrist_elbow_ratio: float = 0.7  # 0.5 is normal for hand length to forearm length (do 0.7 to see a bit further)
+        # 0.5 is normal for hand length to forearm length (do 0.7 to see a bit further)
+        hand_wrist_elbow_ratio: float = 0.7
     ):
         """
         Args:
@@ -253,31 +257,22 @@ class HandCropper:
         *,
         kp_conf_thresh: float = 0.90,
         fast_movement_thresh: int = 15,
-        min_frames_for_fast_movement: int = 4,
-        non_moving_threshold: int = 3,
-        interpolation: str = "middle"  # "middle", "linear", "individual"
+        min_frames_for_movement: int = 4,
+        is_moving_thresh: int = 3
     ):
         """
         Args:
             kp_conf_thresh: Minimum confidence for wrist & elbow keypoints to consider valid.
-            interpolation: Cropping strategy. "middle" uses the midpoint between first & last frames;
-                           "linear" linearly interpolates between first & last frames;
-                           "individual" uses each frame's own keypoints if confident for all frames, else full-frames.
-                           "mixed" follows "middle" if there is not much motion and "linear" otherwise.
-                           If either first/last frames is not confident in "middle" and "linear",
-                                full-frame is used.
             fast_movement_thresh: If the L-inf distance between the first and last frame centers
                                     exceeds this threshold times the number of frames minus one,
                                     the status is "FAST MOVEMENT".
         """
         self.kp_conf_thresh = float(kp_conf_thresh)
         self.fast_movement_thresh = int(fast_movement_thresh)
-        self.min_frames_for_fast_movement = int(min_frames_for_fast_movement)
-        self.non_moving_threshold = int(non_moving_threshold)
+        self.min_frames_for_movement = int(min_frames_for_movement)
+        self.is_moving_thresh = int(is_moving_thresh)
         self._last_center: Optional[Tuple[float, float]] = None
         self._detected = False
-        assert interpolation in ("middle", "linear", "individual", "mixed")
-        self.interpolation = interpolation
 
     def clear(self) -> None:
         pass
@@ -324,70 +319,41 @@ class HandCropper:
                 determined by the interpolation strategy.
         """
         T, H, W, _ = frames.shape
-        if self.interpolation == "middle" or self.interpolation == "linear" or self.interpolation == "mixed":
-            first = hand_kps[0]
-            last = hand_kps[-1]
-            ok = (first[2] >= self.kp_conf_thresh) and (last[2] >= self.kp_conf_thresh)
-            if not ok:
-                full = (0, 0, int(W), int(H))
-                return "ABSTAIN", [full for _ in hand_kps]
-        
-            dist = max(abs(last[0] - first[0]), abs(last[1] - first[1]))
-            slow_mvt = (dist >= self.non_moving_threshold * (T - 1)) and (T >= self.min_frames_for_fast_movement)
-            fast_mvt = (dist >= self.fast_movement_thresh * (T - 1)) and (T >= self.min_frames_for_fast_movement)
-            use_middle = (self.interpolation == "middle" or (self.interpolation == "mixed" and not fast_mvt))
-        
-            if use_middle:
-                crop_box = self._bbox_at_center_with_side(
-                    ((first[0] + last[0]) / 2.0, (first[1] + last[1]) / 2.0),
-                    side=bbox_side, W=W, H=H
-                )
-                pose_status = HandStateStatus.FAST_MOVEMENT if fast_mvt else (
-                    HandStateStatus.OK if slow_mvt else HandStateStatus.OK_NO_MVT
-                )
-                return pose_status, [crop_box for _ in hand_kps]
-
-            else:
-                crop_boxes = [
-                    self._bbox_at_center_with_side(
-                        (
-                            (1 - alpha) * first[0] + alpha * last[0],
-                            (1 - alpha) * first[1] + alpha * last[1]
-                        ),
-                        side=bbox_side, W=W, H=H
-                    )
-                    for alpha in (i / (T - 1) if T > 1 else 0.0 for i in range(T))
-                ]
-                pose_status = HandStateStatus.FAST_MOVEMENT if fast_mvt else (
-                    HandStateStatus.OK if slow_mvt else HandStateStatus.OK_NO_MVT
-                )
-                return pose_status, crop_boxes
-
-        elif self.interpolation == "individual":
-            oks = [
-                (kp[2] >= self.kp_conf_thresh) for kp in hand_kps
-            ]
-            if not all(oks):
-                full = (0, 0, int(W), int(H))
-                return "ABSTAIN", [full for _ in hand_kps]
-        
+        first = hand_kps[0]
+        last = hand_kps[-1]
+        ok = (first[2] >= self.kp_conf_thresh) and (last[2] >= self.kp_conf_thresh)
+        if not ok:
+            full = (0, 0, int(W), int(H))
+            return "ABSTAIN", [full for _ in hand_kps]
+    
+        dist = max(abs(last[0] - first[0]), abs(last[1] - first[1]))
+        slow_mvt = (dist >= self.is_moving_thresh * (T - 1)) and (T >= self.min_frames_for_movement)
+        fast_mvt = (dist >= self.fast_movement_thresh * (T - 1)) and (T >= self.min_frames_for_movement)
+    
+        if fast_mvt:
             crop_boxes = [
                 self._bbox_at_center_with_side(
-                    (kp[0], kp[1]),
+                    (
+                        (1 - alpha) * first[0] + alpha * last[0],
+                        (1 - alpha) * first[1] + alpha * last[1]
+                    ),
                     side=bbox_side, W=W, H=H
                 )
-                for kp in hand_kps
+                for alpha in (i / (T - 1) if T > 1 else 0.0 for i in range(T))
             ]
-            dist = max(abs(hand_kps[-1][0] - hand_kps[0][0]), abs(hand_kps[-1][1] - hand_kps[0][1]))
-            slow_mvt = (dist >= self.non_moving_threshold * (T - 1)) and (T >= self.min_frames_for_fast_movement)
-            fast_mvt = (dist >= self.fast_movement_thresh * (T - 1)) and (T >= self.min_frames_for_fast_movement)
-            pose_status = HandStateStatus.FAST_MOVEMENT if fast_mvt else (
-                HandStateStatus.OK if slow_mvt else HandStateStatus.OK_NO_MVT
-            )
-            return pose_status, crop_boxes
 
         else:
-            raise ValueError(f"Unknown interpolation mode: {self.interpolation}")
+            crop_box = self._bbox_at_center_with_side(
+                ((first[0] + last[0]) / 2.0, (first[1] + last[1]) / 2.0),
+                side=bbox_side, W=W, H=H
+            )
+            crop_boxes = [crop_box for _ in range(T)]
+
+        pose_status = HandStateStatus.FAST_MOVEMENT if fast_mvt else (
+            HandStateStatus.OK if slow_mvt else HandStateStatus.OK_NO_MVT
+        )
+        return pose_status, crop_boxes
+
         
 
 
@@ -444,38 +410,11 @@ class ProcessingNode(ABC):
         ...
 
 
-
-
-
 class MotionProcessingNode(ProcessingNode):
     """
     Stateless node object that *operates on* HandContactCtx and returns the next motion
     state.
     """
-    PREV_IDLE_PROMPT = (
-        # "In the beginning of this video clip, the hand is at rest (i.e. resting "
-        # "on a table or surface without intent to grasp or release any objects). "
-        # "At the end of the video, does the hand start to move? "
-        # "Answer 'Yes.' if you are CONFIDENT that it does; answer 'No.' otherwise.\n"
-        "This is a chunk in a video sequence. Previously, the hand was at rest (i.e. resting "
-        "on a table or surface without intent to grasp or release any objects). "
-        "Is there clear evidence that the hand becomes active during this chunk? "
-        "Answer 'Yes.' if so; answer 'No.' otherwise.\n"
-    )
-    PREV_NOT_IDLE_PROMPT = (
-        # "In the beginning of this video clip, the hand is active (i.e. moving and/or "
-        # "interacting with an object). At the end of the video, does the hand come to rest "
-        # "on the table? "
-        # "Answer 'Yes.' if you are CONFIDENT that it does; answer 'No.' otherwise.\n"
-
-        "This is a chunk in a video sequence. Previously, the hand was active (i.e. moving and/or "
-        "interacting with an object). "
-        "Is the clear evidence that the hand stops moving and comes to rest on a surface? "
-        "Answer 'Yes.' ; answer 'No.' otherwise.\n"
-        # "Does the hand come to rest on the table after this chunk? Answer 'Yes.' if you are confident that the "
-        # "hand comes to rest; answer 'No.' otherwise.\n"
-    )
-
     IDLE_PROMPT = (
         "Is the hand idle in this video clip? \n"
         "(Idle) Visibly resting on the black mat, not moving, and not interacting with a cylindrical block. "
@@ -484,18 +423,6 @@ class MotionProcessingNode(ProcessingNode):
         "be considered 'active.'"
         "Answer 'Yes.' if the hand is idle; answer 'No.' otherwise.\n"
     )
-
-    # IDLE_PROMPT = (
-    #     "Is the hand resting on a black mat and not moving? \n"
-    #     "Answer 'Yes.' if so; answer 'No.' otherwise.\n"
-
-    #     # "Is the hand idle in this video chunk? \n"
-    #     # "Here, idle means the hand is resting on a black mat and not moving. "
-    #     # "Answer 'Yes.' if the hand is idle; answer 'No.' otherwise.\n"
-    # )
-    # IDLE_PROMPT = (
-    #     "Name the color of the cylindrical block on the table. Answer directly."
-    # )
 
     def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
         super().__init__(ctx, vlm, **fmt)
@@ -507,29 +434,15 @@ class MotionProcessingNode(ProcessingNode):
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
         if pose_status == HandStateStatus.ABSTAIN:
-            return MovingState.STATIONARY, {"method": "MPN [abstain]"}
-            # return self.ctx.moving_status, {"method": "MPN [abstain]"}
+            return IdleState.IDLE, {"method": "MPN [abstain]"}
         elif pose_status == HandStateStatus.FAST_MOVEMENT:
-            return MovingState.MOVING, {"method": "MPN [fast movement]"} 
+            return IdleState.ACTIVE, {"method": "MPN [fast movement]"} 
         else:
             ans = self._query_vlm(frames, bboxes, self.IDLE_PROMPT, **self.fmt).lower()
             if "yes" in ans:
-                return MovingState.STATIONARY, {"method": "MPN", "result": f"Ans: {ans}"}
+                return IdleState.IDLE, {"method": "MPN", "result": f"Ans: {ans}"}
             else:
-                return MovingState.MOVING, {"method": "MPN", "result": f"Ans: {ans}"}
-
-        if self.ctx.moving_status == MovingState.STATIONARY:
-            ans = self._query_vlm(frames, bboxes, self.PREV_IDLE_PROMPT, **self.fmt).lower()
-            if "yes" in ans:
-                return MovingState.MOVING, {"method": "MPN", "result": f"Ans: {ans}"}
-            else:
-                return MovingState.STATIONARY, {"method": "MPN", "result": f"Ans: {ans}"}
-        else:
-            ans = self._query_vlm(frames, bboxes, self.PREV_NOT_IDLE_PROMPT, **self.fmt).lower()
-            if "yes" in ans:
-                return MovingState.STATIONARY, {"method": "MPN", "result": f"Ans: {ans}"}
-            else:
-                return MovingState.MOVING, {"method": "MPN", "result": f"Ans: {ans}"}
+                return IdleState.ACTIVE, {"method": "MPN", "result": f"Ans: {ans}"}
 
 
 class GraspProcessingNode(ProcessingNode):
@@ -548,32 +461,8 @@ class GraspProcessingNode(ProcessingNode):
         "answer 'No.' otherwise.\n"
     )
 
-    # RELEASE_PROMPT = (
-    #     "This is a chunk from a video sequence. In the previous chunk, the hand was holding a cylindrical block. "
-    #     "Answer directly: 'Yes.' if the hand releases it in this chunk; "
-    #     "answer 'No.' otherwise.\n"
-    # )
-
-    # CHECK_PREV_LOC_1_PROMPT = (
-    #     "Is a cylindrical block visible? Answer 'Yes.' or 'No.' directly.\n"
-    # )
-    # CHECK_PREV_LOC_2_PROMPT = (
-    #     "Is the cylindrical block held by a hand? Answer 'Yes.' or 'No.' directly.\n"
-    # )
-
-    # PREV_GRASP_PROMPT = (
-    #     "Focus on the patient's {handedness} hand. Previously, it was actively grasping an object. "
-    #     "Does it release the object in this clip? Answer YES or NO directly."
-    # )
-
-    # PREV_EMPTY_PROMPT = (
-    #     "Focus on the patient's {handedness} hand. Previously, the hand was empty. Does it "
-    #     "grasp an object in this clip? Answer YES or NO directly."
-    # )
-
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, conditional: bool = True, **fmt):
+    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
         super().__init__(ctx, vlm, **fmt)
-        # self.conditional = conditional
     
     def run(
         self,
@@ -583,31 +472,15 @@ class GraspProcessingNode(ProcessingNode):
     ) -> Tuple[str, Dict[str, Any]]:
         if pose_status == HandStateStatus.ABSTAIN:
             return GraspState.EMPTY, {"method": "GRP [abstain]"}
-
         if pose_status == HandStateStatus.FAST_MOVEMENT:
             return self.ctx.grasp_status, {"method": "GRP [abstain]"}
-    
+
         if self.ctx.grasp_status == GraspState.HOLDING:
-            # if pose_status == HandStateStatus.FAST_MOVEMENT:
-            #     return GraspState.HOLDING, {"method": "GRP [fast movement]"}
             ans = self._query_vlm(frames, bboxes, self.RELEASE_PROMPT, **self.fmt).lower()
             if "yes" in ans:
                 return GraspState.EMPTY, {"method": "GRP", "result": f"Ans: {ans}"}
             else:
                 return GraspState.HOLDING, {"method": "GRP", "result": f"Ans: {ans}"}
-            # if "yes" in ans:
-            #     # Release check
-            #     ans2 = self._query_vlm(frames, bboxes, self.CHECK_PREV_LOC_1_PROMPT, **self.fmt).lower()
-            #     if "yes" in ans2:
-            #         ans3 = self._query_vlm(frames, bboxes, self.CHECK_PREV_LOC_2_PROMPT, **self.fmt).lower()
-            #         if "no" in ans3:
-            #             return GraspState.EMPTY, {"method": "GRP", "result": f"Ans: {ans} | Loc1: {ans2} | Loc2: {ans3}"}
-            #         else:
-            #             return GraspState.HOLDING, {"method": "GRP", "result": f"Ans: {ans} | Loc1: {ans2} | Loc2: {ans3}"}
-            #     else:
-            #         return GraspState.HOLDING, {"method": "GRP", "result": f"Ans: {ans} | Loc1: {ans2}"}
-            # else:
-            #     return GraspState.HOLDING, {"method": "GRP", "result": f"Ans: {ans}"}
         else:
             ans = self._query_vlm(frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
             if "yes" in ans:
@@ -616,91 +489,11 @@ class GraspProcessingNode(ProcessingNode):
                 return GraspState.EMPTY, {"method": "GRP", "result": f"Ans: {ans}"}
 
 
-        # ans = self._query_vlm(frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
-        # if "yes" in ans:
-        #     return GraspState.HOLDING, {"method": "GRP", "result": f"Ans: {ans}"}
-        # else:
-        #     return GraspState.EMPTY, {"method": "GRP", "result": f"Ans: {ans}"}
-
-        # if not self.conditional:
-        #     ans = self._query_vlm(frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
-        #     if "yes" in ans:
-        #         return GraspState.HOLDING, {"method": "GRP [uncond]", "result": f"Ans: {ans}"}
-        #     else:
-        #         return GraspState.EMPTY, {"method": "GRP [uncond]", "result": f"Ans: {ans}"}
-        # # Conditional prompting
-        # if self.ctx.grasp_status == GraspState.EMPTY:
-        #     ans = self._query_vlm(frames, bboxes, self.PREV_EMPTY_PROMPT, **self.fmt).lower()
-        #     if "yes" in ans:
-        #         return GraspState.HOLDING, {"method": "GRP [prev empty]", "result": f"Ans: {ans}"}
-        #     else:
-        #         return GraspState.EMPTY, {"method": "GRP [prev empty]", "result": f"Ans: {ans}"}
-        # else:
-        #     ans = self._query_vlm(frames, bboxes, self.PREV_GRASP_PROMPT, **self.fmt).lower()
-        #     if "yes" in ans:
-        #         return GraspState.EMPTY, {"method": "GRP [prev grasp]", "result": f"Ans: {ans}"}
-        #     else:
-        #         return GraspState.HOLDING, {"method": "GRP [prev grasp]", "result": f"Ans: {ans}"}
-
-
 class InteractionProcessingNode(ProcessingNode):
     """
     Stateless node object that *operates on *HandCtx* and returns the next interaction state
     and info related to the decision.
     """
-    # TSPrompt = (
-    #     "This is a chunk from a video sequence. "
-    #     "Answer 'Stabilize.' if the hand holds the cylindrical block steady with minimal movement in the air or when placing it down. "
-    #     "Answer 'Other.' for everything else, e.g., if the hand is not holding a cylindrical block, the hand is "
-    #     "MOVING/CARRYING/REORIENTING the block. If unsure, answer 'Other.'\n"
-    # )
-
-    # TSPrompt = (
-    #     "This is a chunk from a video sequence. Output exactly one word: 'Stabilize.' or 'Other.'\n"
-    #     "Answer 'Stabilize.' **only if you are highly confident** that the hand is stabilizing the "
-    #     "cylindrical block to keep the block completely still. \n"
-    #     "Answer 'Other.' otherwise. If unsure, answer 'Other.'\n"
-    #     # "Answer 'Other.' for everything else, e.g., if the hand is moving towards the block, picking it up, carrying it, "
-    #     # "repositioning it, or even just not holding the block. If unsure, answer 'Other.'\n"
-    # )
-
-
-    # TSPrompt = (
-    #     "Label 'Stabilize' only if the hand is holding a cylindrical block steady: either keeping it still "
-    #     "while placing it down or freezing entirely in mid-air with minimal movement. "
-    #     "Otherwise, label 'Other' (e.g., reaching, moving, reorienting, or not holding the block). "
-    #     "Most cases are 'Other.' If uncertain, choose 'Other.'"
-        
-    #     # "Answer directly 'Stabilize.' if the hand keeps the cylindrical block still in the air or "
-    #     # "still as it is being placed down so that the block will not topple. Answer 'Other.' otherwise, including "
-    #     # "when the hand is moving the block or not holding it.\n"
-
-    #     # "Answer either 'Stabilize.' or 'Other.' according to the following criteria. \n\n"
-
-    #     # "Criteria for 'Stabilize':\n"
-    #     # "The hand is carefully stabilizing the cylindrical block as it is being held in the air or placed down. "
-
-    #     # "If both a hand and a cylindrical block are visible, and the hand is keeping the block still "
-    #     # "as it is placing the block down, answer directly 'Stabilize.'; otherwise, answer 'Other.'\n"
-
-    #     # "Is the hand keeping a cylindrical block still as it is placing the block down? \n"
-
-    #     # "Is the hand grasping a cylindrical block, keeping it still that both the hand and the block "
-    #     # "exhibit essentially no motion? \n\n"
-    #     # "Answer 'Stabilize.' if so; otherwise answer 'Other.'\n\n"
-
-
-    #     # "Is the hand stabilizing a cylindrical block in this video chunk? \n\n"
-
-    #     # "## Criteria for 'Stabilize':\n"
-    #     # "1. The hand is grasping the cylindrical block and is in complete control of it.\n"
-    #     # "2. Both the hand and block exhibit essentially no motion. Even a small amount of movement is not allowed.\n"
-    #     # "3. The hand is keeping the block still. This can be in the air or on the table.\n\n"
-
-    #     # "Decision Rule: answer 'Stabilize.' only if ALL the criteria are met; otherwise, answer 'Other.' Answer directly with one word.\n\n"
-    # )
-
-
     def run(
         self,
         pose_status: str,
@@ -716,26 +509,6 @@ class InteractionProcessingNode(ProcessingNode):
         else:
             return InteractionState.TRANSPORT, {"method": "TS [default]"}
 
-        # return InteractionState.TRANSPORT, {"method": "TS [default]"}
-        # if pose_status == HandStateStatus.ABSTAIN:
-        #     return InteractionState.TRANSPORT, {"method": "TS [abstain]"}
-        # # if self.ctx.grasp_status != GraspState.HOLDING:
-        # #     return InteractionState.TRANSPORT, {"method": "TS [not holding]"}
-        
-        # # A stabilize could have fast movement when a control subject is setting 
-        # # down the object carefully. Hence, FAST_MOVEMENT is not useful to us.
-
-        # ans = self._query_vlm(
-        #     frames, bboxes,
-        #     self.TSPrompt,
-        #     **self.fmt
-        # ).lower()
-        # if "stabilize" in ans:
-        #     return InteractionState.STABILIZE, {"method": "TS", "result": f"Ans: {ans}"}
-        # else:
-        #     return InteractionState.TRANSPORT, {"method": "TS", "result": f"Ans: {ans}"}
-
-
 
 ####################################### ORCHESTRATION SECTION #######################################
 
@@ -744,11 +517,11 @@ class HandStateMachine:
     """
     Orchestrates the conditional prompting logic.
     """
-    def __init__(self, vlm: VLMProtocol, handedness: str, conditional: bool = True):
+    def __init__(self, vlm: VLMProtocol, handedness: str):
         self.ctx = HandCtx(handedness=handedness)
-        self.motion_node = MotionProcessingNode(self.ctx, vlm, conditional=conditional, handedness=handedness)
-        self.grasp_node = GraspProcessingNode(self.ctx, vlm, conditional=conditional, handedness=handedness)
-        self.i_node = InteractionProcessingNode(self.ctx, vlm, conditional=conditional, handedness=handedness)
+        self.motion_node = MotionProcessingNode(self.ctx, vlm, handedness=handedness)
+        self.grasp_node = GraspProcessingNode(self.ctx, vlm, handedness=handedness)
+        self.i_node = InteractionProcessingNode(self.ctx, vlm, handedness=handedness)
 
     def step(
         self, chunk: VideoChunk
@@ -760,7 +533,7 @@ class HandStateMachine:
         idle, idle_info = self.motion_node.run(
             chunk.pose_status, frames, bboxes
         )
-        self.ctx.moving_status = idle
+        self.ctx.idle_status = idle
 
         grasp, grasp_info = self.grasp_node.run(
             chunk.pose_status, frames, bboxes
@@ -774,16 +547,16 @@ class HandStateMachine:
 
         self.ctx.pose_status = chunk.pose_status
 
-        if self.ctx.moving_status == MovingState.STATIONARY:
+        if idle == IdleState.IDLE:
             prim = "idle"
         else:
-            if self.ctx.grasp_status == GraspState.HOLDING:
-                if self.ctx.interaction_status == InteractionState.STABILIZE:
-                    prim = "stabilize"
-                else:
-                    prim = "transport"
-            else:
+            if grasp == GraspState.EMPTY:
                 prim = "reach"
+            else:
+                if interaction == InteractionState.TRANSPORT:
+                    prim = "transport"
+                else:
+                    prim = "stabilize"
 
         info = {
             "idle": idle, "idle_info": idle_info,
@@ -825,7 +598,6 @@ def predict_with_state_machine(
     sampling_strategy: str = "dense",
     overlap_frames_num: int = 0,
     sampling_fps: int = 15,
-    conditional_prompting: bool = True,
     cropping: bool = True,
 ) -> Tuple[List[str], List[float], Dict[str, Any]]:
     """
@@ -838,12 +610,11 @@ def predict_with_state_machine(
         sampling_strategy: "dense" | "uniform"
         overlap_frames_num: number of overlapping frames between chunks (only for "dense"). Keep at 0.
         sampling_fps: fps to sample the video at
-        conditional_prompting: whether to use conditional prompting in the state machine
         cropping: whether to use hand-centric cropping
 
     Returns a list of primitives (one per frame), their timestamps, and detailed info.
     """
-    machine = HandStateMachine(vlm, handedness, conditional=conditional_prompting)
+    machine = HandStateMachine(vlm, handedness)
     hand_locator = HandLocator(pose_stream, vlm, hand_wrist_elbow_ratio=0.75)
     hand_cropper = HandCropper()
     hand_locator.clear()
@@ -913,19 +684,21 @@ def predict_with_state_machine(
     grasps = infos.get("grasp", [])
     interactions = infos.get("interaction", [])
     assert len(raw_prims) == len(idles) == len(grasps) == len(interactions) == len(times)
-    
+
     ### Post-process the signals
     T = len(raw_prims)
 
     # Dilate and erode to smooth idles and grasps
-    expand(idles, MovingState.MOVING, max_frames_num)
-    expand(idles, MovingState.STATIONARY, max_frames_num)
+    expand(idles, IdleState.ACTIVE, max_frames_num)
+    expand(idles, IdleState.IDLE, max_frames_num)
+    for i in range(T):
+        grasps[i] = GraspState.EMPTY if idles[i] == IdleState.IDLE else grasps[i]
     expand(grasps, GraspState.HOLDING, max_frames_num)
     expand(grasps, GraspState.EMPTY, max_frames_num)
 
     prims = ["UNK" for _ in range(T)]
     # Fill in idle and transport (transport as a place-holder for transport+stabilize)
-    prims = ["idle" if idles[i] == MovingState.STATIONARY else prims[i] for i in range(T)]
+    prims = ["idle" if idles[i] == IdleState.IDLE else prims[i] for i in range(T)]
     prims = ["transport" if (prims[i] == "UNK" and grasps[i] == GraspState.HOLDING) else prims[i] for i in range(T)]
 
     # Fill UNK with reach/reposition depending on past and future knowns
@@ -1004,6 +777,8 @@ def predict_with_state_machine(
                     if active_stabilize:
                         stabilize_segments.append((stabilize_start, j))
                         active_stabilize = False
+            if active_stabilize:
+                stabilize_segments.append((stabilize_start, grasp_end))
 
             # `stabilize_segments` is sorted by construction
             # Two cases where we actually integrate stabilize into prims
@@ -1013,16 +788,16 @@ def predict_with_state_machine(
             last_active_s_end = -1
             for (s_start, s_end) in stabilize_segments:
                 length = s_end - s_start
-                if length >= 3 * max_frames_num:
+                if length >= 2 * max_frames_num:
                     for j in range(s_start, s_end):
                         prims[j] = "stabilize"
                     last_active_s_end = s_end
                 elif grasp_end - s_end <= 3 * max_frames_num:
-                    for j in range(s_end - max_frames_num, s_end):
+                    for j in range(grasp_end - max_frames_num, grasp_end):
                         prims[j] = "stabilize"
-                    if (s_end - max_frames_num) - last_active_s_end < max_frames_num:
+                    if (grasp_end - max_frames_num) - last_active_s_end < max_frames_num:
                         # Merge with previous segment
-                        for j in range(last_active_s_end, s_end - max_frames_num):
+                        for j in range(last_active_s_end, grasp_end - max_frames_num):
                             prims[j] = "stabilize"
 
     return prims, times, infos
