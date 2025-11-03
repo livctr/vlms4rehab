@@ -26,10 +26,11 @@ def _dedup(lst):
             deduped.append(item)
     return deduped
 
-def _get_primitives_score(pred, ref):
+def _get_primitives_score(pred, ref, dedupe=True):
     """Normalized sequence similarity using Levenshtein distance"""
-    pred = _dedup([x.lower() for x in pred])
-    ref = _dedup([x.lower() for x in ref])
+    if dedupe:
+        pred = _dedup([x.lower() for x in pred])
+        ref = _dedup([x.lower() for x in ref])
 
     max_len = max(len(pred), len(ref))
     if max_len == 0:
@@ -75,8 +76,12 @@ def sr_primitives_doc_to_visual(doc, lmms_eval_specific_kwargs=None):
 def sr_primitives_doc_to_text(doc, lmms_eval_specific_kwargs=None):
 
     # Throw an error if the specific kwargs are not provided
-    use_video_with_segmentations = lmms_eval_specific_kwargs["use_video_with_segmentations"]
-    prompt = lmms_eval_specific_kwargs["prompt"]
+    if lmms_eval_specific_kwargs is not None:
+        use_video_with_segmentations = lmms_eval_specific_kwargs.get("use_video_with_segmentations", False)
+        prompt = lmms_eval_specific_kwargs.get("prompt", "ideal")
+    else:
+        use_video_with_segmentations = False
+        prompt = "ideal"
 
     if use_video_with_segmentations:
         which_hand = "highlighted hand in RED"
@@ -326,7 +331,7 @@ def load_strokerehab_primitives_dataset(
         activity (str): The activity names to include in the dataset. Default is 'all' (11 total).
             If specifying individual activities, separate them with commas
             Example: 'RTT left side,RTT right side,brushing,combing,deodrant,drinking,face wash,feeding,glasses,shelf left side,shelf right side'
-        reps (str): Either 'all' or 'first'.
+        reps (str | int): Either 'all', 'first', or a number specifying the nth instance (includes repetition/view) to include.
         filter_for_testset (bool): If True, include only the VIDEOS in the test set of
             the original StrokeRehab paper. https://pubmed.ncbi.nlm.nih.gov/37766938/
             This data is located in './data/fp/strokerehab_test_set.txt' and already
@@ -352,8 +357,13 @@ def load_strokerehab_primitives_dataset(
             df = df[df['activity'].isin(activity)]
         if reps != 'all':
             if reps != 'first':
-                raise ValueError("Invalid value for reps. Must be 'all' or 'first'.")
-            df = df.sort_values('id').groupby(['patient', 'activity']).agg('first').reset_index()
+                try:
+                    reps = int(reps)
+                except ValueError:
+                    raise ValueError("Invalid value for reps. Must be 'all', 'first', or a number.")
+            else:
+                reps = 0
+            df = df.sort_values('id').groupby(['patient', 'activity']).nth(reps).reset_index()
         if filter_for_testset:
             df = df[df['is_in_strokerehab_test_set']]
         if filter_for_subsampled_testset:
@@ -392,6 +402,71 @@ strokerehab_load_dataset_healthy_subset = partial(load_strokerehab_primitives_da
 
 strokerehab_load_small_test = partial(load_strokerehab_primitives_dataset,
                                       patients='C00020,C00023',
-                                      reps='first')
+                                      reps=1)
 
 
+def strokerehab_load_rtt_shelf_counting_dataset(test_set=True):
+
+    ds = load_strokerehab_primitives_dataset(activity='RTT left side,RTT right side,shelf left side,shelf right side')
+    best_views = pd.read_csv('data/rs/best_views.txt')
+    df = ds['test'].to_pandas()
+
+    prompt_tune_patients = "C00020,C00023,S00019"
+    test_patients = (
+        "C00022,C00024,C00025,C00028,C00029,"
+        "S00013,S00016,S00023,S00010,S00012,"
+        "S00011,S00017,S0001,S0003,S00018,"
+        "S00021,S00029,S00031,S00034,S00049"
+    )
+    patients = test_patients if test_set else prompt_tune_patients
+    df = df[df['patient'].isin(patients.split(','))]
+
+    best_views_selected = pd.merge(df, best_views, on='id', how='inner')
+    df = (best_views_selected
+            .sort_values('id').groupby(['patient', 'activity'])
+            .first()
+            .reset_index()
+    )
+    df["activity_type"] = df["activity"].str.extract(r"(RTT|shelf)", expand=False)
+    df = df.groupby(["patient", "activity_type"], as_index=False).first()
+    df = df.drop(columns="activity_type")
+
+    dataset = datasets.Dataset.from_pandas(df)
+    dataset_dict = datasets.DatasetDict({'test': dataset})
+    return dataset_dict
+
+
+def load_strokerehab_final():
+    # Same stroke patients
+    ds = load_strokerehab_primitives_dataset(patients="S00013,S00016,S00023,S00011,S00017", reps="first")
+    df_stroke = ds['test'].to_pandas()
+
+    # C00026 -> C00027. Filter out double shelf/RTT exercises for control
+    ds = load_strokerehab_primitives_dataset(patients="C00022,C00023,C00024,C00028,C00029", reps="first")
+    df_control = ds['test'].to_pandas()
+    df_control = df_control[~df_control['activity'].isin(['shelf left side', 'RTT left side'])]
+
+    df_combined = pd.concat([df_stroke, df_control], ignore_index=True)
+
+    df_combined = df_combined.head(1)
+
+    dataset = datasets.Dataset.from_pandas(df_combined)
+    dataset_dict = datasets.DatasetDict({'test': dataset})
+    return dataset_dict
+
+
+def load_strokerehab_left_v_right():
+    # Same stroke patients
+    ds = load_strokerehab_primitives_dataset(activity='RTT left side,RTT right side')
+    df = ds['test'].to_pandas()
+    control_mask = ~df['stroke']
+    first_rep_mask = df['path_v'].str.contains('RTT right side1') | df['path_v'].str.contains('RTT left side1')
+    df = df[control_mask & first_rep_mask]
+    patient_has_all_four = (df.groupby('patient')['id'].count() == 4)
+    df = df[df['patient'].isin(patient_has_all_four[patient_has_all_four].index)]
+    control_patient_list = "C00022,C00023,C00024,C00028,C00029".split(',')
+    df = df[df['patient'].isin(control_patient_list)].copy()
+
+    dataset = datasets.Dataset.from_pandas(df)
+    dataset_dict = datasets.DatasetDict({'test': dataset})
+    return dataset_dict
