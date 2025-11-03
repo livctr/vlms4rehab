@@ -211,8 +211,6 @@ class HandLocator:
         for i in range(T):
             kps = self.stream.process_frame(frames[i])  # (1, num_person, 17, 3)
             kp = kps[0, 0]
-            kps_wrist.append(kp[kp_wrist])
-            kps_elbow.append(kp[kp_elbow])
 
             wx, wy, wc = kp[kp_wrist]
             ex, ey, ec = kp[kp_elbow]
@@ -222,10 +220,10 @@ class HandLocator:
                 np.isnan(wx) or np.isnan(wy) or np.isnan(wc)
                 or np.isnan(ex) or np.isnan(ey) or np.isnan(ec)
             ):
-                # skip or insert a placeholder
-                kps_wrist.append(np.array([np.nan, np.nan, 0.0], dtype=kp.dtype))
-                kps_elbow.append(np.array([np.nan, np.nan, 0.0], dtype=kp.dtype))
-                kps_hand.append(np.array([np.nan, np.nan, 0.0], dtype=kp.dtype))
+                placeholder = np.array([np.nan, np.nan, 0.0], dtype=kp.dtype)
+                kps_wrist.append(placeholder)
+                kps_elbow.append(placeholder)
+                kps_hand.append(placeholder)
                 continue
 
             hx = ex + (wx - ex) * (1.0 + self.hand_wrist_elbow_ratio)  # heuristic for hand position
@@ -239,6 +237,9 @@ class HandLocator:
             ey = max(0, min(H - 1, round(ey)))
             hx = max(0, min(W - 1, round(hx)))
             hy = max(0, min(H - 1, round(hy)))
+
+            kps_wrist.append(np.array([wx, wy, float(wc)], dtype=kp.dtype))
+            kps_elbow.append(np.array([ex, ey, float(ec)], dtype=kp.dtype))
             kps_hand.append(np.array([hx, hy, hc], dtype=kp.dtype))
 
         return {
@@ -637,7 +638,6 @@ def predict_with_state_machine(
     Returns a list of primitives (one per frame), their timestamps, and detailed info.
     """
     machine = HandStateMachine(vlm, handedness, do_crop=do_crop)
-    assert 1 == 0, "TODO: modify crop. "
     hand_locator = HandLocator(pose_stream, vlm, hand_wrist_elbow_ratio=0.75)
     hand_cropper = HandCropper()
     hand_locator.clear()
