@@ -429,22 +429,26 @@ class MotionProcessingNode(ProcessingNode):
     state.
     """
     MOTION_PROMPT = (
-        "Focus on the patient's {handedness} hand. Is it actively moving an object, moving towards "
+        "Focus on the {referred_hand}. Is it actively moving an object, moving towards "
         "an object, or moving away from an object? Answer YES or NO."
     )
 
     PREV_STILL_PROMPT = (
-        "Focus on the patient's {handedness} hand. It was previously still. Is it now actively moving "
+        "Focus on the {referred_hand}. It was previously still. Is it now actively moving "
         "an object, moving towards an object, or moving away from an object? Answer YES or NO."
     )
 
     PREV_MOVING_PROMPT = (
-        "Focus on the patient's {handedness} hand. It was previously moving an object or moving "
+        "Focus on the {referred_hand}. It was previously moving an object or moving "
         "toward/away from one. Is it now still? Answer YES or NO."
     )
 
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, conditional: bool = True, **fmt):
-        super().__init__(ctx, vlm, **fmt)
+    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, handedness: str, conditional: bool = True):
+        super().__init__(ctx, vlm)
+        self.hand_references = [
+            "hand in the center",
+            "patient's {} hand".format(handedness)
+        ]
         self.conditional = conditional
 
     def run(
@@ -453,21 +457,24 @@ class MotionProcessingNode(ProcessingNode):
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
+        referred_hand = self.hand_references[1 if pose_status == HandStateStatus.ABSTAIN else 0]
+        fmt = {**self.fmt, "referred_hand": referred_hand}
+
         if not self.conditional:
-            ans = self._query_vlm(frames, bboxes, self.MOTION_PROMPT, **self.fmt).lower()
+            ans = self._query_vlm(frames, bboxes, self.MOTION_PROMPT, **fmt).lower()
             if "yes" in ans:
                 return MovingState.MOVING, {"method": "MPN [uncond]", "result": f"Ans: {ans}"}
             else:
                 return MovingState.STATIONARY, {"method": "MPN [uncond]", "result": f"Ans: {ans}"}
         # Conditional prompting
         if self.ctx.moving_status == MovingState.STATIONARY:
-            ans = self._query_vlm(frames, bboxes, self.PREV_STILL_PROMPT, **self.fmt).lower()
+            ans = self._query_vlm(frames, bboxes, self.PREV_STILL_PROMPT, **fmt).lower()
             if "yes" in ans:
                 return MovingState.MOVING, {"method": "MPN [prev still]", "result": f"Ans: {ans}"}
             else:
                 return MovingState.STATIONARY, {"method": "MPN [prev still]", "result": f"Ans: {ans}"}
         else:
-            ans = self._query_vlm(frames, bboxes, self.PREV_MOVING_PROMPT, **self.fmt).lower()
+            ans = self._query_vlm(frames, bboxes, self.PREV_MOVING_PROMPT, **fmt).lower()
             if "yes" in ans:
                 return MovingState.STATIONARY, {"method": "MPN [prev moving]", "result": f"Ans: {ans}"}
             else:
@@ -480,21 +487,25 @@ class GraspProcessingNode(ProcessingNode):
     state.
     """
     GRASP_PROMPT = (
-        "Focus on the patient's {handedness} hand. Is it actively grasping or holding an object? Answer YES or NO."
+        "Focus on the {referred_hand}. Is it actively grasping or holding an object? Answer YES or NO."
     )
 
     PREV_GRASP_PROMPT = (
-        "Focus on the patient's {handedness} hand. Previously, it was actively grasping an object. "
+        "Focus on the {referred_hand}. Previously, it was actively grasping an object. "
         "Does it release the object in this clip? Answer YES or NO directly."
     )
 
     PREV_EMPTY_PROMPT = (
-        "Focus on the patient's {handedness} hand. Previously, the hand was empty. Does it "
+        "Focus on the {referred_hand}. Previously, the hand was empty. Does it "
         "grasp an object in this clip? Answer YES or NO directly."
     )
 
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, conditional: bool = True, **fmt):
-        super().__init__(ctx, vlm, **fmt)
+    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, handedness: str, conditional: bool = True):
+        super().__init__(ctx, vlm)
+        self.hand_references = [
+            "hand in the center",
+            "patient's {} hand".format(handedness)
+        ]
         self.conditional = conditional
     
     def run(
@@ -503,21 +514,24 @@ class GraspProcessingNode(ProcessingNode):
         frames: np.ndarray,
         bboxes: List[Tuple[int, int, int, int]],
     ) -> Tuple[str, Dict[str, Any]]:
+        referred_hand = self.hand_references[1 if pose_status == HandStateStatus.ABSTAIN else 0]
+        fmt = {**self.fmt, "referred_hand": referred_hand}
+
         if not self.conditional:
-            ans = self._query_vlm(frames, bboxes, self.GRASP_PROMPT, **self.fmt).lower()
+            ans = self._query_vlm(frames, bboxes, self.GRASP_PROMPT, **fmt).lower()
             if "yes" in ans:
                 return GraspState.HOLDING, {"method": "GRP [uncond]", "result": f"Ans: {ans}"}
             else:
                 return GraspState.EMPTY, {"method": "GRP [uncond]", "result": f"Ans: {ans}"}
         # Conditional prompting
         if self.ctx.grasp_status == GraspState.EMPTY:
-            ans = self._query_vlm(frames, bboxes, self.PREV_EMPTY_PROMPT, **self.fmt).lower()
+            ans = self._query_vlm(frames, bboxes, self.PREV_EMPTY_PROMPT, **fmt).lower()
             if "yes" in ans:
                 return GraspState.HOLDING, {"method": "GRP [prev empty]", "result": f"Ans: {ans}"}
             else:
                 return GraspState.EMPTY, {"method": "GRP [prev empty]", "result": f"Ans: {ans}"}
         else:
-            ans = self._query_vlm(frames, bboxes, self.PREV_GRASP_PROMPT, **self.fmt).lower()
+            ans = self._query_vlm(frames, bboxes, self.PREV_GRASP_PROMPT, **fmt).lower()
             if "yes" in ans:
                 return GraspState.EMPTY, {"method": "GRP [prev grasp]", "result": f"Ans: {ans}"}
             else:
@@ -531,7 +545,7 @@ class HandStateMachine:
     """
     Orchestrates the conditional prompting logic.
     """
-    def __init__(self, vlm: VLMProtocol, handedness: str, conditional: bool = True, **fmt):
+    def __init__(self, vlm: VLMProtocol, handedness: str, conditional: bool = True):
         self.ctx = HandCtx(handedness=handedness)
         self.motion_node = MotionProcessingNode(self.ctx, vlm, conditional=conditional, handedness=handedness)
         self.grasp_node = GraspProcessingNode(self.ctx, vlm, conditional=conditional, handedness=handedness)
@@ -618,9 +632,11 @@ def predict_with_state_machine(
         # Run the pose model always to get pose_status. Change boxes if not cropping.
         kp = hand_locator.process_frames(frames, handedness=handedness)
         kp_wrist, kp_elbow, kp_hand = kp["wrist"], kp["elbow"], kp["hand"]
-        pose_status, boxes = hand_cropper.process_frames(frames, hand_kps=kp_hand, bbox_side=224)
-        if not cropping:
+        if cropping:
+            pose_status, boxes = hand_cropper.process_frames(frames, hand_kps=kp_hand, bbox_side=224)
+        else:
             box = (0, 0, frames.shape[2], frames.shape[1])
+            pose_status = HandStateStatus.ABSTAIN
             boxes = [box for _ in range(num_frames)]
 
         chunk = VideoChunk(
