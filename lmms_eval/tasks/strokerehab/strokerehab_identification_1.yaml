@@ -1,0 +1,27 @@
+dataset_kwargs:
+  use_dataset_builder: !function utils_identification.load_ds
+task: "strokerehab_identification_1"
+test_split: test
+output_type: generate_until
+doc_to_visual: !function utils_identification.sr_id_doc_to_visual
+doc_to_text: !function utils_identification.sr_id_doc_to_text
+doc_to_target: !function utils_identification.sr_id_doc_to_target
+generation_kwargs:
+  max_new_tokens: 512
+  temperature: 0
+  top_p: 1.0
+  num_beams: 1
+  do_sample: false
+process_results: !function utils_identification.sr_id_process_results
+metric_list:
+  - metric: accuracy
+    aggregation: mean
+    higher_is_better: true
+lmms_eval_specific_kwargs:
+  prompt: "normal"  # "tuned"
+filter_list:
+  - name: "combine-and-parse"
+    filter:
+      - function: !function utils_identification.OutputToResultsFilter
+metadata:
+  version: 1.0

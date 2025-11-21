@@ -82,7 +82,6 @@ class Qwen2_5_VL(lmms):
             ).eval()
         else:
             self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(pretrained, torch_dtype="auto", device_map=self.device_map).eval()
-        self.processor = AutoProcessor.from_pretrained(pretrained, max_pixels=max_pixels, min_pixels=min_pixels)
         self.max_pixels = max_pixels
         self.min_pixels = min_pixels
         self.max_frames_num = max_frames_num
@@ -241,6 +240,7 @@ class Qwen2_5_VL(lmms):
                 ]
                 messages.append(msg)
                 text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+                # video_inputs is 1092x700
                 image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
                 inputs = self.processor(
                     text=text,
@@ -279,6 +279,21 @@ class Qwen2_5_VL(lmms):
 
                 for i, inputs in enumerate(built_inputs):
                     with torch.inference_mode():
+                        # Get logits for next token prediction
+                        outputs = self.model(**inputs)
+                        logits = outputs.logits[:, -1, :]  # Get logits for last position
+                        
+                        # Get top 10 probabilities
+                        probs = torch.softmax(logits, dim=-1)
+                        top_probs, top_indices = torch.topk(probs, k=10, dim=-1)
+                        
+                        # Convert to tokens for inspection
+                        top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
+                        top_prob_values = top_probs[0].tolist()
+                        
+                        eval_logger.debug(f"Top 10 next tokens: {list(zip(top_tokens, top_prob_values))}")
+                        
+                        # Generate normally for the actual continuation
                         cont = self.model.generate(
                             **inputs,
                             eos_token_id=self.tokenizer.eos_token_id,

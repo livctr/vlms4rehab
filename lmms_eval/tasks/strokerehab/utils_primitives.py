@@ -448,25 +448,8 @@ def load_strokerehab_final():
 
     df_combined = pd.concat([df_stroke, df_control], ignore_index=True)
 
-    df_combined = df_combined.head(1)
+    # df_combined = df_combined.iloc[2:3]
 
     dataset = datasets.Dataset.from_pandas(df_combined)
-    dataset_dict = datasets.DatasetDict({'test': dataset})
-    return dataset_dict
-
-
-def load_strokerehab_left_v_right():
-    # Same stroke patients
-    ds = load_strokerehab_primitives_dataset(activity='RTT left side,RTT right side')
-    df = ds['test'].to_pandas()
-    control_mask = ~df['stroke']
-    first_rep_mask = df['path_v'].str.contains('RTT right side1') | df['path_v'].str.contains('RTT left side1')
-    df = df[control_mask & first_rep_mask]
-    patient_has_all_four = (df.groupby('patient')['id'].count() == 4)
-    df = df[df['patient'].isin(patient_has_all_four[patient_has_all_four].index)]
-    control_patient_list = "C00022,C00023,C00024,C00028,C00029".split(',')
-    df = df[df['patient'].isin(control_patient_list)].copy()
-
-    dataset = datasets.Dataset.from_pandas(df)
     dataset_dict = datasets.DatasetDict({'test': dataset})
     return dataset_dict

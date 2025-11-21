@@ -1,7 +1,7 @@
 # Load StrokeRehab dataset from local
 dataset_kwargs:
-  use_dataset_builder: !function utils_primitives.strokerehab_load_dataset_debug
-task: "strokerehab_primitives_7"
+  use_dataset_builder: !function utils_primitives.strokerehab_load_rtt_shelf_counting_dataset
+task: "strokerehab_counting"
 test_split: test
 output_type: generate_until
 doc_to_visual: !function utils_primitives.sr_primitives_doc_to_visual
@@ -53,9 +53,15 @@ metric_list:
     aggregation: mean
   - metric: count_idle
     aggregation: mean
-
+  - metric: grasp_releases_count_pred
+    aggregation: mean
+  - metric: grasp_releases_count_ref
+    aggregation: mean
+  - metric: grasp_releases_err
+    aggregation: mean
+    higher_is_better: false
 lmms_eval_specific_kwargs:
-  prompt: "ideal"
+  prompt: "single_motion_and_contact"  # "single_prediction", "ideal"
   use_video_with_segmentations: false
 filter_list:
   - name: "combine-and-parse"
