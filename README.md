@@ -6,7 +6,7 @@
 
 > Abstract: Vision–language models (VLMs) have demonstrated remarkable performance across a wide range of computer-vision tasks, sparking interest in their potential for digital health applications. Here, we apply VLMs to two fundamental challenges in data-driven stroke rehabilitation: automatic quantification of rehabilitation dose and impairment from videos. We formulate these problems as motion-identification tasks, which can be addressed using VLMs. We evaluate our proposed framework on a cohort of 29 healthy controls and 51 stroke survivors. Our results show that current VLMs lack the fine-grained motion understanding required for precise quantification: dose estimates are comparable to a baseline that excludes visual information, and impairment scores cannot be reliably predicted. Nevertheless, several findings suggest future promise. With optimized prompting and post-processing, VLMs can classify high-level activities from a few frames, detect motion and grasp with moderate accuracy, and approximate dose counts within 25% of ground truth for mildly impaired and healthy participants, all without task-specific training or finetuning. These results highlight both the current limitations and emerging opportunities of VLMs for data-driven stroke rehabilitation and broader clinical video analysis.
 
-![Stroke Rehabilitation Tasks](assets/fig1_cropped.svg)
+![Stroke Rehabilitation Tasks](assets/fig1.png)
 
 
 ### Reproducing the Results
@@ -65,7 +65,7 @@ Running ablations
 
 See the [the paper](#the-potential-and-limitations-of-vision-language-models-for-human-motion-understanding-a-case-study-in-data-driven-stroke-rehabilitation) for further quantitative results!
 
-![Stroke Rehabilitation Tasks](assets/failures.svg)
+![Stroke Rehabilitation Tasks](assets/failures.png)
 
 
 
