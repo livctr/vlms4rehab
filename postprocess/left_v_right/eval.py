@@ -7,7 +7,6 @@ from lmms_eval.tasks.strokerehab.utils_primitives import load_strokerehab_primit
 from postprocess.left_v_right.left_v_right_prompter import get_left_v_right_answers
 from tools.ultralytics_pose import Pose2DStream
 from lmms_eval.models.qwen2_5_vl_signal_generator import Qwen2_5_VL_SignalGenerator as Qwen2_5_VL_VQA
-# from tools.vqa.qwen2_5_vl import Qwen2_5_VL_VQA
 
 
 def convert_answers_times_to_pandas(answers, times):
