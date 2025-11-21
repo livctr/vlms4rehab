@@ -9,10 +9,6 @@
 #SBATCH --output=results/output_%j.txt  # Save output in a file named with job ID
 #SBATCH --error=results/output_%j.txt    # Save error logs
 
-
-export HF_HOME="***REMOVED***"
-export HF_TOKEN="***REMOVED***"
-
 deactivate_all_conda_envs() {
   while [[ -n "$CONDA_DEFAULT_ENV" ]]; do
     echo "Deactivating conda environment: $CONDA_DEFAULT_ENV"
@@ -24,5 +20,4 @@ source ~/.bashrc
 conda init
 cd "$(pwd)"
 conda activate cvfm4rehab
-
 python -m postprocess.left_v_right.eval
