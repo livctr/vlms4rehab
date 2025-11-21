@@ -109,7 +109,7 @@ class PrimitiveLabelUtils:
         """
         df = pd.read_csv(path)
         times = df['Time_s'].tolist()
-        markers = df['MarkerNames']
+        markers = df['MarkerNames'].astype(str)
         if handedness is None:
             num_lefts = markers.str.startswith('l_').sum() + markers.str.contains('_l_').sum()
             num_rights = markers.str.startswith('r_').sum() + markers.str.contains('_r_').sum()

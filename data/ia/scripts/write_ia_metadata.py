@@ -71,6 +71,7 @@ def concat_pair_clip(
     filter_complex = pad0 + pad1 + stack
     cmd = [
         "ffmpeg",
+        "-y",
         "-i", str(left_vid),
         "-i", str(right_vid),
         "-filter_complex", filter_complex,
@@ -99,17 +100,6 @@ def get_patient_to_affected_side_mapping():
             mapping[patient] = affected_side
     return mapping
 
-
-
-# FM_ITEM_TO_FM_RANGE = {
-#     3: (3, 8), 4: (3, 8), 5: (3, 8), 6: (3, 8), 7: (3, 8), 8: (3, 8),
-#     9: (9, 11), 10: (9, 11), 11: (9, 11),
-#     12: (12, 12), 13: (13, 13), 14: (14, 14), 15: (15, 15), 16: (16, 16), 17: (17, 17),
-#     18: (18, 18), 19: (19, 19), 20: (20, 20), 21: (21, 21), 22: (22, 22), 23: (23, 23),
-#     24: (24, 25), 25: (24, 25),
-#     26: (26, 26), 27: (27, 27), 28: (28, 28), 29: (29, 29), 30: (30, 30),
-#     31: (31, 33), 32: (31, 33), 33: (31, 33),
-# }
 
 def extract_FM_clips(filter_by_patients=None, force_extract=False):
     """
@@ -194,6 +184,16 @@ def extract_FM_clips(filter_by_patients=None, force_extract=False):
             start, end = segs[1]
         else:
             raise ValueError(f"Missing segment for times: {times_str}. Video: {video_path}. FM item: {fm_range}")
+
+        # Extend start/end times by 0.1s on each side
+        def _t2s(t):
+            p = t.split(':')
+            return float(p[-1]) + (float(p[-2]) if len(p) > 1 else 0) * 60 + (float(p[-3]) if len(p) > 2 else 0) * 3600
+        def _s2t(x):
+            x = max(0.0, x)
+            h = int(x // 3600); m = int((x % 3600) // 60); s = x - 60 * m - 3600 * h
+            return f"{h:02d}:{m:02d}:{s:06.3f}"
+        start, end = _s2t(_t2s(start) - 0.1), _s2t(_t2s(end) + 0.1)
 
         # `laterality` = which arm we are watching? The affected ('A') or healthy ('H') one?
         if ((video_side == 'L') and (affected_side == 'Left')) or \
@@ -385,8 +385,8 @@ def write_ia_video_metadata(
 
 
 if __name__ == "__main__":
-    # extract_FM_clips(['C00011', 'S0005', 'S0001', 'S00021'])
-    # write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH1, DataPaths.IA_QUESTIONS_PATH1)
-    # write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH2, DataPaths.IA_QUESTIONS_PATH2)
+    extract_FM_clips(force_extract=False)
+    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH1, DataPaths.IA_QUESTIONS_PATH1)
+    write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH2, DataPaths.IA_QUESTIONS_PATH2)
     write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH3, DataPaths.IA_QUESTIONS_PATH3)
     write_ia_video_metadata(DataPaths.IA_VIDEO_METADATA_PATH4, DataPaths.IA_QUESTIONS_PATH4)
