@@ -1,11 +1,14 @@
 # log_factor_plots_v2.py
 from __future__ import annotations
 
+import re
 import json, os
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Tuple, Optional
+from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 # ----------------------------
@@ -165,6 +168,7 @@ def preds_and_truth_from_record(rec: Dict) -> Tuple[pd.DataFrame, pd.DataFrame, 
     meta = {
         "edit_score": rec.get("edit_score"),
         "action_error_rate": rec.get("action_error_rate"),
+        "mae_avg": rec.get("mae_avg"),
     }
     return pred_df, truth_df, ex.uid, meta
 
@@ -208,7 +212,7 @@ def plot_factor_bars(
 
     def _draw(df: pd.DataFrame, y: float, row_name: str):
         # background label on left
-        ax.text(xmin, y + 0.38, row_name, fontsize=9)
+        ax.text(xmin, y + 0.38, row_name, fontsize=12)
         for _, r in df.iterrows():
             w = float(r["end"] - r["start"])
             if w <= 0:
@@ -324,7 +328,7 @@ def plot_all_examples_from_log(
     for rec in iter_json_records_from_log(log_path):
         try:
             pred_df, truth_df, uid, meta = preds_and_truth_from_record(rec)
-            out_png = os.path.join(plot_dir, f"{uid}_factors.png")
+            out_png = os.path.join(plot_dir, f"{uid}_factors.pdf")
             plot_factor_bars(
                 pred_df,
                 truth_df,
@@ -342,6 +346,331 @@ def plot_all_examples_from_log(
 
 
 
+
+# --------------------------------
+# NEW: multi-log comparison support
+# --------------------------------
+from dataclasses import dataclass
+
+@dataclass
+class MethodResult:
+    method: str
+    pred_df: pd.DataFrame
+    truth_df: pd.DataFrame
+    meta: Dict
+
+def _safe_preds_from_log(log_path: str) -> List[Tuple[str, pd.DataFrame, pd.DataFrame, Dict]]:
+    """
+    Wrapper around preds_to_df_from_log with try/except isolation.
+    """
+    try:
+        return preds_to_df_from_log(log_path)
+    except Exception:
+        return []
+
+def collect_uid_index(log_specs: List[Tuple[str, str]]) -> Dict[str, Dict[str, MethodResult]]:
+    """
+    Build an index of uid -> { method_name: MethodResult } from multiple logs.
+
+    Args:
+        log_specs: List of (method_name, log_path)
+
+    Returns:
+        uid_index: Dict[uid, Dict[method_name, MethodResult]]
+    """
+    uid_index: Dict[str, Dict[str, MethodResult]] = {}
+    for method, log_path in log_specs:
+        for uid, pred_df, truth_df, meta in _reorder_preds_tuple(_safe_preds_from_log(log_path)):
+            bucket = uid_index.setdefault(uid, {})
+            bucket[method] = MethodResult(method=method, pred_df=pred_df, truth_df=truth_df, meta=meta or {})
+    return uid_index
+
+def _reorder_preds_tuple(rows: List[Tuple[str, pd.DataFrame, pd.DataFrame, Dict]]):
+    """
+    Your preds_to_df_from_log returns [(uid, pred_df, truth_df, meta)].
+    Keep a helper to make the unpack explicit/robust.
+    """
+    for row in rows:
+        uid, pred_df, truth_df, meta = row
+        yield (uid, pred_df, truth_df, meta)
+
+def _compute_global_tlim(method_results: List[MethodResult]) -> Tuple[float, float]:
+    """
+    Compute a common [xmin, xmax] across GT and Pred segments for all methods sharing a uid.
+    If no segments, default to (0, 1).
+    """
+    xmin = 0.0
+    xmaxs: List[float] = []
+    for mr in method_results:
+        if not mr.truth_df.empty:
+            xmaxs += mr.truth_df["end"].tolist()
+        if not mr.pred_df.empty:
+            xmaxs += mr.pred_df["end"].tolist()
+    xmax = max(xmaxs) if xmaxs else 1.0
+    return (xmin, xmax)
+
+def _bar_color_from_map(lbl: str, label_to_color: Optional[Dict[str, str]]) -> Optional[str]:
+    if not label_to_color:
+        return None
+    return label_to_color.get((lbl or "").strip().lower())
+
+
+def _draw_row(
+    ax,
+    df: pd.DataFrame,
+    y: float,
+    row_name: str,
+    xmin: float,
+    label_to_color: Optional[Dict[str, str]],
+    *,
+    bar_height: float = 0.78,      # 0..1 relative row thickness
+    text_size: float = 14.0,       # label font size (scaled by your caller)
+    label_dx: float = 0.02,        # label nudge to the right (in data units)
+    edgecolor: Optional[str] = None,  # None for no edges; "black" for thin borders
+    linewidth: float = 0.25,       # edge line width if edgecolor is set
+) -> None:
+    """
+    Draw one horizontal row of segments and a left label.
+
+    Notes:
+    - `bar_height` is relative to the row spacing (we position rows on integer y's),
+      so 0.65–0.85 is a good compact range.
+    - `label_dx` nudges the row label slightly right from `xmin` to avoid colliding with bars.
+    """
+    # Row label (vertically centered on the row)
+    ax.text(
+        xmin + label_dx, y, row_name,
+        fontsize=text_size, va="center", ha="left", weight="bold"
+    )
+
+    if df is None or df.empty:
+        return
+
+    for _, r in df.iterrows():
+        start = float(r["start"])
+        end   = float(r["end"])
+        w = end - start
+        if not np.isfinite(w) or w <= 0:
+            continue
+
+        c = _bar_color_from_map(str(r["label"]), label_to_color)
+
+        ax.barh(
+            y,
+            width=w,
+            left=start,
+            height=bar_height,
+            align="center",
+            color=c,
+            edgecolor=edgecolor,
+            linewidth=linewidth,
+            zorder=2,
+        )
+
+
+def plot_uid_across_methods(
+    uid: str,
+    methods: List[MethodResult],
+    *,
+    save_path: Optional[str] = None,
+    label_to_color: Optional[Dict[str, str]] = None,
+    write_metrics: bool = False,
+) -> None:
+    """
+    Create a single figure for one UID: top row is GT, followed by one Pred row per method.
+    If a method is missing GT (shouldn't happen if logs are consistent), we still draw Pred rows.
+
+    Row labels look like:
+      - "GT"
+      - "Pred — <method>  (ES=..., AER=...)" if write_metrics
+    """
+    if not methods:
+        return
+
+    # Compute a global time window
+    xmin, xmax = _compute_global_tlim(methods)
+    total_rows = 1 + len(methods)  # 1 GT + N methods
+
+    plt.figure(figsize=(11, max(3.0, 1.2 * total_rows)))
+    ax = plt.gca()
+
+    # Draw GT using the *first available* truth_df (assumes same GT across methods)
+    # We prefer a truth_df that isn't empty. If all empty, just skip GT row.
+    gt_df = None
+    for mr in methods:
+        if not mr.truth_df.empty:
+            gt_df = mr.truth_df
+            break
+    if gt_df is None and methods:
+        # fallback: if all truth_df empty, build an empty frame to keep layout
+        gt_df = pd.DataFrame(columns=["label", "start", "end"])
+
+    # Y rows: GT at top
+    y_gt = float(total_rows - 1)
+    if gt_df is not None:
+        _draw_row(ax, gt_df, y_gt, "GT", xmin, label_to_color,
+          bar_height=0.75, text_size=14, label_dx=0.02,
+          edgecolor=None, linewidth=0.25)
+
+    # Methods (Pred rows)
+    # Highest y at the top, then down
+    for i, mr in enumerate(methods):
+        y = float(total_rows - 2 - i)  # directly under GT
+        # Label row, optionally with metrics
+        row_name = f"Pred — {mr.method}"
+        if write_metrics and isinstance(mr.meta, dict):
+            es  = mr.meta.get("edit_score")
+            aer = mr.meta.get("action_error_rate")
+            suffix = []
+            if es is not None:
+                try:
+                    suffix.append(f"ES={float(es):.2f}")
+                except Exception:
+                    suffix.append(f"ES={es}")
+            if aer is not None:
+                try:
+                    suffix.append(f"AER={float(aer):.4f}")
+                except Exception:
+                    suffix.append(f"AER={aer}")
+            if suffix:
+                row_name += "  (" + ", ".join(suffix) + ")"
+
+        _draw_row(ax, mr.pred_df, y, row_name, xmin, label_to_color,
+          bar_height=0.75, text_size=13, label_dx=0.02,
+          edgecolor=None, linewidth=0.25)
+
+    ax.set_yticks([])
+    ax.set_xlim(xmin, xmax)
+    ax.set_xlabel("Time (s)", fontsize=20)
+    ax.set_title(uid, fontsize=20)
+    ax.tick_params(axis='x', labelsize=20)
+
+    ax.grid(True, axis="x", linestyle="--", linewidth=0.5, alpha=0.6)
+    plt.tight_layout()
+
+    if save_path:
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path, dpi=220)
+        plt.close()
+    else:
+        plt.show()
+        plt.close()
+
+def plot_all_examples_across_logs(
+    log_specs: List[Tuple[str, str]],
+    plot_dir: str,
+    *,
+    label_to_color: Optional[Dict[str, str]] = None,
+    write_metrics: bool = False,
+    only_overlap: bool = True,
+) -> List[str]:
+    """
+    Compare multiple logs per item (uid). Writes one PNG per uid:
+      <plot_dir>/<uid>_compare.pdf
+
+    Args:
+        log_specs: List of (method_name, log_path). The method_name appears on the Pred row.
+        plot_dir: Output directory for PNGs.
+        label_to_color: Optional dict lowercased label -> color hex (consistent with your single-plot).
+        write_metrics: If True, each method row includes ES/AER when available.
+        only_overlap: If True, plot only UIDs that appear in >= 2 of the provided logs.
+                      If False, plot every UID present in at least one log (missing methods are just absent).
+
+    Returns:
+        List of saved PNG paths.
+    """
+    os.makedirs(plot_dir, exist_ok=True)
+    uid_index = collect_uid_index(log_specs)
+
+    # Determine overlap if requested
+    # Build map: uid -> number of methods present
+    uid_method_counts = {uid: len(mdict) for uid, mdict in uid_index.items()}
+
+    saved: List[str] = []
+    for uid, mdict in uid_index.items():
+        if only_overlap and uid_method_counts.get(uid, 0) < 2:
+            continue
+
+        # Keep method order matching the input log_specs
+        methods_in_order: List[MethodResult] = []
+        seen = set()
+        for method, _path in log_specs:
+            mr = mdict.get(method)
+            if mr is not None and method not in seen:
+                methods_in_order.append(mr)
+                seen.add(method)
+
+        if not methods_in_order:
+            continue
+
+        out_png = os.path.join(plot_dir, f"{uid}_compare.pdf")
+        plot_uid_across_methods(
+            uid,
+            methods_in_order,
+            save_path=out_png,
+            label_to_color=label_to_color,
+            write_metrics=write_metrics,
+        )
+        saved.append(out_png)
+    return saved
+
+
+_TS_RE = re.compile(r"(?P<ts>\d{8}_\d{6})_samples_.*\.jsonl$")
+
+
+def get_latest_sample_logs(base_log_dir: str | Path) -> List[Tuple[str, str]]:
+    """
+    For each immediate subfolder of `base_log_dir`, find the most recent file whose
+    name matches:
+        YYYYMMDD_HHMMSS_samples_<anything>.jsonl
+
+    This searches recursively *within each* top-level subfolder to allow for
+    structures like:
+        <base>/<method>/**/YYYYMMDD_HHMMSS_samples_task.jsonl
+
+    Returns:
+        List of (subfolder_name, latest_log_path) pairs. Subfolders with no matching
+        files are skipped.
+    """
+    base = Path(base_log_dir)
+    if not base.exists() or not base.is_dir():
+        return []
+
+    results: List[Tuple[str, str]] = []
+
+    # Only consider immediate children of base as "method" folders
+    for method_dir in sorted(p for p in base.iterdir() if p.is_dir()):
+        latest_ts: Optional[pd.Timestamp] = None
+        latest_path: Optional[Path] = None
+
+        # Search recursively inside each method folder
+        for root, _, files in os.walk(method_dir):
+            for fname in files:
+                # Fast pre-filter: we only care about files that look like samples jsonl
+                if "_samples_" not in fname or not fname.endswith(".jsonl"):
+                    continue
+
+                m = _TS_RE.search(fname)
+                if not m:
+                    continue  # Requires a leading timestamp before `_samples_`
+
+                ts_str = m.group("ts")
+                try:
+                    ts = pd.to_datetime(ts_str, format="%Y%m%d_%H%M%S")
+                except Exception:
+                    continue
+
+                fpath = Path(root) / fname
+                if (latest_ts is None) or (ts > latest_ts):
+                    latest_ts = ts
+                    latest_path = fpath
+
+        if latest_path is not None:
+            results.append((method_dir.name, str(latest_path)))
+
+    return results
+
+
 # ----------------------------
 # Optional: small CLI
 # ----------------------------
@@ -354,12 +683,29 @@ if __name__ == "__main__":
         "reposition": "#56B4E9", # sky blue (86,180,233)
         "stabilize": "#CC79A7",  # purple (204,121,167)
     }
-    log_path = "logs/strokerehab_primitives_3/qwen2_5_vl_32b/Qwen__Qwen2.5-VL-32B-Instruct/20251009_192151_samples_strokerehab_primitives_3.jsonl"
-    plot_dir = "./viz/smc_baseline/"
 
-    plot_all_examples_from_log(
-        log_path=log_path,
-        plot_dir=plot_dir,
+    models = [
+        "internvl3p5_2b", "internvl3p5_8b", "internvl3p5_38b",
+        "llava_next_video_7b", "llava_ov_7b",
+        "nvila_8b",
+        "qwen2_5_vl_7b", "qwen2_5_vl_32b", "qwen2_5_vl_72b",
+    ]
+
+    latest_log_specs = get_latest_sample_logs("logs/strokerehab_primitives_3/")
+    latest_log_specs = {k: v for k, v in latest_log_specs}
+    latest_log_specs["qwen2_5_vl_32b"] = "logs/strokerehab_primitives_3/qwen2_5_vl_32b/Qwen__Qwen2.5-VL-32B-Instruct/20251009_091138_samples_strokerehab_primitives_3.jsonl"
+
+    filtered_log_specs = []
+    for model in models:
+        if model not in latest_log_specs:
+            print(f"Warning: no log found for model '{model}'")
+        else:
+            filtered_log_specs.append((model, latest_log_specs[model]))
+
+    saved = plot_all_examples_across_logs(
+        log_specs=filtered_log_specs,
+        plot_dir="./viz/all/",
         label_to_color=label_to_color,
-        write_metrics=True,   # adds metrics to title + writes <uid>_metrics.json
+        write_metrics=True,
+        only_overlap=True,
     )

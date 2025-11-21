@@ -5,9 +5,17 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem-per-cpu=16G
-#SBATCH --time=3-00:00:00
+#SBATCH --time=32:00:00
 #SBATCH --output=results/output_%j.txt  # Save output in a file named with job ID
 #SBATCH --error=results/output_%j.txt    # Save error logs
+
+
+# sb evaluate.sh --model qwen2_5_vl_72b --task strokerehab_ia4_31_33
+
+
+# bash evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=1,sampling_strategy=dense,sampling_fps=2,overlap_frames_num=0"
+
+
 
 # # Window of 1 sec
 # bash evaluate.sh --model qwen2_5_vl_7b --task strokerehab_primitives_2 --model_args "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=1,sampling_strategy=dense,sampling_fps=1,overlap_frames_num=0"
@@ -128,6 +136,10 @@ sb evaluate3.sh --model qwen2_5_vl_72b --task strokerehab_primitives_7
 sb evaluate2.sh --model internvl3p5_38b --task strokerehab_primitives_7
 sb evaluate3.sh --model internvl3_78b --task strokerehab_primitives_7
 
+
+
+# Run rtt_shelf_counting.py
+
 ### IA RUNS ###
 # # One GPU
 # sb evaluate.sh --model qwen2_5_vl_7b --task strokerehab_ia3_3_30,strokerehab_ia3_31_33,strokerehab_ia4_3_30,strokerehab_ia4_31_33
@@ -147,3 +159,36 @@ sb evaluate3.sh --model internvl3_78b --task strokerehab_primitives_7
 # sb evaluate.sh --model llava_ov_72b --task strokerehab_ia3_3_30,strokerehab_ia3_31_33,strokerehab_ia4_3_30,strokerehab_ia4_31_33
 # sb evaluate.sh --model llava_next_video_72b --task strokerehab_ia3_3_30,strokerehab_ia3_31_33,strokerehab_ia4_3_30,strokerehab_ia4_31_33
 # sb evaluate.sh --model internvl_2p5_78b --task strokerehab_ia3_3_30,strokerehab_ia3_31_33,strokerehab_ia4_3_30,strokerehab_ia4_31_33
+
+
+
+# bash evaluate.sh --model qwen2_5_vl_7b --task strokerehab_identification
+
+
+# sbatch --gres=gpu:a100:1 evaluate.sh --model llava_ov_0p5b --task strokerehab_primitives_3
+# sbatch --gres=gpu:a100:1 evaluate.sh --model llava_ov_7b --task strokerehab_primitives_3
+# sbatch --gres=gpu:a100:1 evaluate.sh --model llava_next_video_7b --task strokerehab_primitives_3
+# sbatch --gres=gpu:a100:3 evaluate.sh --model llava_ov_72b --task strokerehab_primitives_3
+# sbatch --gres=gpu:a100:3 evaluate.sh --model llava_next_video_72b --task strokerehab_primitives_3
+
+
+
+####### Counting ######
+# SMC (8, 15)
+# sb evaluate.sh --model qwen2_5_vl_32b --task strokerehab_counting --model_args "pretrained=Qwen/Qwen2.5-VL-32B-Instruct,max_frames_num=8,sampling_strategy=dense,sampling_fps=15,overlap_frames_num=0"
+# SMC (4, 15)
+# sb evaluate.sh --model qwen2_5_vl_32b --task strokerehab_counting --model_args "pretrained=Qwen/Qwen2.5-VL-32B-Instruct,max_frames_num=4,sampling_strategy=dense,sampling_fps=15,overlap_frames_num=0"
+
+# PRIM pipeline
+# sb evaluate.sh --model qwen2_5_vl_prim --task strokerehab_counting --model_args "do_crop=False,do_postprocess=False"
+# sb evaluate.sh --model qwen2_5_vl_prim --task strokerehab_counting --model_args "do_crop=False,do_postprocess=True"
+# sb evaluate.sh --model qwen2_5_vl_prim --task strokerehab_counting --model_args "do_crop=True,do_postprocess=False"
+# sb evaluate.sh --model qwen2_5_vl_prim --task strokerehab_counting --model_args "do_crop=True,do_postprocess=True"
+
+# 1. 11534361
+# 2. 11557490
+
+# 3. 11557558
+# 4. 11557555
+# 5. 11557543
+# 6. 11557537

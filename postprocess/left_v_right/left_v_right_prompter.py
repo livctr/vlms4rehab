@@ -1,17 +1,90 @@
+"""
+Tests conditional prompting and cropping.
+
+In `predict_with_state_machine`, set the `cropping`
+and `conditional_prompting` flags to True/False.
+"""
+
 from __future__ import annotations
-from typing import Optional, Tuple, List, Any, Dict, Union
-import numpy as np
-from tools.ultralytics_pose import Pose2DStream
-from tools.vqa.qwen2_5_vl import Qwen2_5_VL_VQA
+
+from abc import ABC
+from dataclasses import dataclass, field
 import json
-from PIL import Image, ImageDraw
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
+
+import numpy as np
+
+from lmms_eval.models.model_utils.load_video import load_long_video_decord
+from lmms_eval.tasks.strokerehab.utils_primitives import _convert_motion_contact_to_primitives
+from tools.ultralytics_pose import Pose2DStream
+from loguru import logger as eval_logger
+
+####################################### DATA CLASSES #######################################
 
 
-Number = Union[int, float]
+class HandStateStatus:
+    OK            = "OK"
+    ABSTAIN       = "ABSTAIN"
+    FAST_MOVEMENT = "FAST MOVEMENT"
 
-def _to_float4(b: Union[List[Number], Tuple[Number, Number, Number, Number]]) -> Tuple[float, float, float, float]:
+
+class MovingState:
+    STATIONARY    = "stationary"
+    MOVING        = "moving"
+
+
+class GraspState:
+    EMPTY         = "empty"
+    HOLDING       = "holding"
+
+
+@dataclass
+class VideoChunk:
+    pose_status: str
+    frames: np.ndarray
+    bboxes: List[Tuple[int, int, int, int]]
+    start_t: float
+    end_t: float
+
+
+@dataclass
+class HandCtx:
+    """
+    The hand state that moves through the nodes.
+    """
+    handedness: str  # "left" | "right"
+    pose_status: str = HandStateStatus.OK  # "OK" | "ABSTAIN" | "FAST MOVEMENT"
+    moving_status: str = MovingState.STATIONARY  # "stationary" | "moving"
+    grasp_status: str = GraspState.EMPTY  # "empty" | "holding"
+
+
+class VLMProtocol(Protocol):
+    def process_frames(self, frames: np.ndarray, prompt: str) -> str:
+        """
+        Arguments:
+            frames: (N, H, W, 3) array of video frames, dtype=uint8, color=RGB
+            prompts: list of string prompts, one per frame chunk
+        Returns:
+            string answer
+        """
+        ...
+    
+    def clear(self) -> None:
+        """Clear the model state, if any."""
+        ...
+
+
+####################################### Hand Localization #######################################
+
+def _to_float4(
+    b: Union[List[Union[int, float]], Tuple[Union[int, float], Union[int, float], Union[int, float], Union[int, float]]]
+) -> Tuple[float, float, float, float]:
+    """Convert bbox coordinates to float tuple."""
     if not isinstance(b, (list, tuple)) or len(b) != 4:
-        raise ValueError(f"Expected bbox of length 4, got {type(b).__name__} with len={len(b) if hasattr(b, '__len__') else 'N/A'}")
+        raise ValueError(
+            f"Expected bbox of length 4, got {type(b).__name__} with "
+            f"len={len(b) if hasattr(b, '__len__') else 'N/A'}"
+        )
     x1, y1, x2, y2 = b
     for v in (x1, y1, x2, y2):
         if not isinstance(v, (int, float)):
@@ -26,9 +99,10 @@ def _strip_to_json_array(s: str) -> str:
         raise ValueError("Could not find a JSON array in the input string.")
     return s[start:end+1]
 
-def extract_first_bbox_and_label(
+def _extract_largest_bbox_and_label(
     detections: Union[str, List[Dict[str, Any]]]
 ) -> Tuple[Tuple[float, float, float, float], Optional[str]]:
+    """Parse the VQA output for bounding boxes. This capability is specific to Qwen2.5(+)-VL."""
     if isinstance(detections, str):
         detections_json = _strip_to_json_array(detections)
         detections_list: List[Dict[str, Any]] = json.loads(detections_json)
@@ -65,20 +139,20 @@ def extract_first_bbox_and_label(
     return largest
 
 
-LOCATE_PROMPT = (
-    "Locate the patient as a bounding box in JSON. "
-    "If there are multiple people, find all of them."
-)
-
 class HandLocator:
     """
     Track the patient and extract wrist/elbow keypoints using a pose model and 
     hand keypoints using a heuristic relying on the ratio of forearm to hand lengths.
     """
+    LOCATE_PROMPT = (
+        "Locate the patient as a bounding box in JSON. "
+        "If there are multiple people, find all of them."
+    )
+
     def __init__(
         self,
         stream: Optional[Pose2DStream],
-        vqa_model: Optional[Qwen2_5_VL_VQA],
+        vqa_model: Optional[VLMProtocol],
         *,
         hand_wrist_elbow_ratio: float = 0.7  # 0.5 is normal for hand length to forearm length (do 0.7 to see a bit further)
     ):
@@ -113,9 +187,9 @@ class HandLocator:
         self.stream.reset_results()
         if not self._person_detected:
             self._person_detected = True
-            prompt = person_locating_prompt if person_locating_prompt is not None else LOCATE_PROMPT
-            patient_loc_text = self.vqa_model.process_frames(frames[0], context=prompt)
-            bbox, label = extract_first_bbox_and_label(patient_loc_text)
+            prompt = person_locating_prompt if person_locating_prompt is not None else self.LOCATE_PROMPT
+            patient_loc_text = self.vqa_model.process_frames(frames[0], prompt)
+            bbox, label = _extract_largest_bbox_and_label(patient_loc_text)
             self.stream.add_new_person_to_track(bbox=bbox, label=label)
 
         # Ensure we get the right elbow/wrist keypoints
@@ -125,8 +199,6 @@ class HandLocator:
         for i in range(T):
             kps = self.stream.process_frame(frames[i])  # (1, num_person, 17, 3)
             kp = kps[0, 0]
-            kps_wrist.append(kp[kp_wrist])
-            kps_elbow.append(kp[kp_elbow])
 
             wx, wy, wc = kp[kp_wrist]
             ex, ey, ec = kp[kp_elbow]
@@ -136,10 +208,10 @@ class HandLocator:
                 np.isnan(wx) or np.isnan(wy) or np.isnan(wc)
                 or np.isnan(ex) or np.isnan(ey) or np.isnan(ec)
             ):
-                # skip or insert a placeholder
-                kps_wrist.append(np.array([np.nan, np.nan, 0.0], dtype=kp.dtype))
-                kps_elbow.append(np.array([np.nan, np.nan, 0.0], dtype=kp.dtype))
-                kps_hand.append(np.array([np.nan, np.nan, 0.0], dtype=kp.dtype))
+                placeholder = np.array([np.nan, np.nan, 0.0], dtype=kp.dtype)
+                kps_wrist.append(placeholder)
+                kps_elbow.append(placeholder)
+                kps_hand.append(placeholder)
                 continue
 
             hx = ex + (wx - ex) * (1.0 + self.hand_wrist_elbow_ratio)  # heuristic for hand position
@@ -153,6 +225,9 @@ class HandLocator:
             ey = max(0, min(H - 1, round(ey)))
             hx = max(0, min(W - 1, round(hx)))
             hy = max(0, min(H - 1, round(hy)))
+
+            kps_wrist.append(np.array([wx, wy, float(wc)], dtype=kp.dtype))
+            kps_elbow.append(np.array([ex, ey, float(ec)], dtype=kp.dtype))
             kps_hand.append(np.array([hx, hy, hc], dtype=kp.dtype))
 
         return {
@@ -170,7 +245,8 @@ class HandCropper:
         self,
         *,
         kp_conf_thresh: float = 0.90,
-        fast_movement_thresh: int = 12,
+        fast_movement_thresh: int = 10,
+        min_frames_for_fast_movement: int = 4,
         interpolation: str = "middle"  # "middle", "linear", "individual"
     ):
         """
@@ -188,6 +264,7 @@ class HandCropper:
         """
         self.kp_conf_thresh = float(kp_conf_thresh)
         self.fast_movement_thresh = int(fast_movement_thresh)
+        self.min_frames_for_fast_movement = int(min_frames_for_fast_movement)
         self._last_center: Optional[Tuple[float, float]] = None
         self._detected = False
         assert interpolation in ("middle", "linear", "individual", "mixed")
@@ -247,7 +324,7 @@ class HandCropper:
                 return "ABSTAIN", [full for _ in hand_kps]
         
             dist = max(abs(last[0] - first[0]), abs(last[1] - first[1]))
-            fast_mvt = dist >= self.fast_movement_thresh * (T - 1)
+            fast_mvt = (dist >= self.fast_movement_thresh * (T - 1)) and (T >= self.min_frames_for_fast_movement)
             use_middle = (self.interpolation == "middle" or (self.interpolation == "mixed" and not fast_mvt))
         
             if use_middle:
@@ -285,114 +362,178 @@ class HandCropper:
                 for kp in hand_kps
             ]
             dist = max(abs(hand_kps[-1][0] - hand_kps[0][0]), abs(hand_kps[-1][1] - hand_kps[0][1]))
-            fast_mvt = dist >= self.fast_movement_thresh * (T - 1)
+            fast_mvt = (dist >= self.fast_movement_thresh * (T - 1)) and (T >= self.min_frames_for_fast_movement)
             return ("FAST MOVEMENT" if fast_mvt else "OK", crop_boxes)
 
         else:
             raise ValueError(f"Unknown interpolation mode: {self.interpolation}")
+        
 
 
-CONTACT_PROMPT = (
-    # "Target objects: {target_objects}\n"
-    "Which of the following best describes the hand? Answer directly. \n"
-    "- Answer 'Holding.' if it is holding something. \n"
-    "- Answer 'Not holding.' if it is not holding something.\n"
-    # "- Answer 'Grasping.' if it is fully grasping or holding one of the target objects.\n"
-    # "- Answer 'Empty.' if it is not in contact with one of the target objects."
+####################################### GRASP/RELEASE SECTION #######################################
+
+def _get_cropped(
+    frames: np.ndarray, bboxes: List[Tuple[int, int, int, int]]
+) -> np.ndarray:
+    cropped_frames = []
+    for frame, (x1, y1, x2, y2) in zip(frames, bboxes):
+        cropped = frame[y1:y2, x1:x2]  # standard numpy slicing
+        cropped_frames.append(cropped)
+    return np.stack(cropped_frames, axis=0)
+
+
+
+####################################### ORCHESTRATION SECTION #######################################
+
+LEFT_PROMPT = (
+    "Focus on the patient's LEFT hand. Do not mention or consider the other hand in any way. "
+    "Based on the movement and posture of the patient's LEFT hand, is the LEFT hand moving or "
+    "moving an object? Answer 'Yes.' or 'No.' directly.\n\n"
 )
 
-# DO_YOU_SEE_TARGET_OBJECTS = (
-#     "Target objects: {target_objects}\n"
-#     "Do you see any target objects in this frame? Answer the color and identity of the object "
-#     "directly if so (e.g. 'red fork', 'blue cup'); otherwise, answer 'None.'\n"
-# )
-
-RELEASE_SNAPSHOT_PROMPT = (
-    "This is a frame in a video sequence. The hand was holding something in the previous frame. "
-    "If the hand is releasing the object in this frame and the object being released is visible, "
-    "answer 'Release.'; otherwise, answer 'Other.'\n"
+RIGHT_PROMPT = (
+    "Focus on the patient's RIGHT hand. Do not mention or consider the other hand in any way. "
+    "Based on the movement and posture of the patient's RIGHT hand, is the RIGHT hand moving or "
+    "moving an object? Answer 'Yes.' or 'No.' directly.\n\n"
 )
 
-GRASP_SNAPSHOT_PROMPT = (
-    "This is a frame in a video sequence. The hand was not holding anything in the previous frame. "
-    "If the hand is grasping an object in this frame and the object being grasped is visible, "
-    "answer 'Grasp.'; otherwise, answer 'Other.'\n"
-)
-
-
-class HandContactDetector:
-
-    def __init__(self, vqa_model: Optional[Qwen2_5_VL_VQA]):
-        self.vqa_model = vqa_model
-    
-    def clear(self) -> None:
-        self.vqa_model.clear()
-    
-    def process_frames(self, frames: np.ndarray, *, target_objects: str) -> List[float]:
-        frames = np.asarray(frames)
-        assert frames.ndim == 4 and frames.shape[-1] == 3, "frames must be (T, H, W, 3) RGB"
-        T, H, W, _ = frames.shape
-
-        snapshot_contacts, snapshot_releases, snapshot_grasps = [], [], []
-        for i, frame in enumerate(frames):
-            prompt = CONTACT_PROMPT.format(target_objects=target_objects)
-            c = self.vqa_model.process_frames(frame, context=prompt)
-            snapshot_contacts.append(c)
-
-            prompt = RELEASE_SNAPSHOT_PROMPT.format(target_objects=target_objects)
-            r = self.vqa_model.process_frames(frame, context=prompt)
-            snapshot_releases.append(r)
-
-            prompt = GRASP_SNAPSHOT_PROMPT.format(target_objects=target_objects)
-            g = self.vqa_model.process_frames(frame, context=prompt)
-            snapshot_grasps.append(g)
-
-            print(c + ' \t\t ' + r + ' \t\t ' + g)
-        return snapshot_contacts, snapshot_releases, snapshot_grasps
-
-
-
-RELEASE_PROMPT = (
-    "This is a chunk in a video sequence. The hand was holding a(n) {target_object} in the previous chunk. "
-    "If the hand is visibly releasing the object in this chunk, answer 'Release.'; otherwise, answer 'Other.'\n"
-)
-GRASP_PROMPT = (
-    "This is a chunk in a video sequence. The hand was not holding anything in the previous chunk. "
-    "If the hand is grasping an object in this chunk and the object being grasped is visible, "
-    "answer 'Grasp.'; otherwise, answer 'Other.'\n"
-)
-WHICH_OBJECT_PROMPT = (
-    "Target objects: {target_objects}\n\n"
-    "We just detected a grasp. Answer directly with the color and identity of the object being grasped "
-    "(e.g. 'Red fork.', 'Blue cup.').\n"
+CROPPED_PROMPT = (
+    "Based on the movement and posture of the hand, is the hand in the center moving or "
+    "moving an object? Answer 'Yes.' or 'No.' directly.\n\n"
 )
 
 
-class HandContactReleaseGraspDetector:
-    def __init__(self, vqa_model: Optional[Qwen2_5_VL_VQA]):
-        self.vqa_model = vqa_model
-        self._target_object = ""
-    
-    def clear(self) -> None:
-        self.vqa_model.clear()
-    
-    def process_frames(self, frames: np.ndarray, *, target_objects: str) -> List[float]:
-        frames = np.asarray(frames)
-        assert frames.ndim == 4 and frames.shape[-1] == 3, "frames must be (T, H, W, 3) RGB"
-        T, H, W, _ = frames.shape
+def compute_iou(box_a: Tuple[float, float, float, float],
+                box_b: Tuple[float, float, float, float]) -> float:
+    """
+    Compute Intersection-over-Union (IoU) for two axis-aligned boxes.
 
-        prompt  = RELEASE_PROMPT.format(target_object=self._target_object)
-        release = self.vqa_model.process_frames(frames, context=prompt)
-        prompt  = GRASP_PROMPT.format(target_objects=target_objects)
-        grasp   = self.vqa_model.process_frames(frames, context=prompt)
+    Boxes are (x1, y1, x2, y2). If coordinates are swapped (x2 < x1 or y2 < y1),
+    they will be normalized. Returns 0.0 for invalid/zero-area boxes or no overlap.
+    """
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
 
-        if "grasp" in grasp.lower():
-            prompt = WHICH_OBJECT_PROMPT.format(target_objects=target_objects)
-            which_object = self.vqa_model.process_frames(frames, context=prompt)
+    # Normalize corners (handle swapped inputs)
+    ax1, ax2 = min(ax1, ax2), max(ax1, ax2)
+    ay1, ay2 = min(ay1, ay2), max(ay1, ay2)
+    bx1, bx2 = min(bx1, bx2), max(bx1, bx2)
+    by1, by2 = min(by1, by2), max(by1, by2)
+
+    # Areas
+    aw = max(0.0, ax2 - ax1)
+    ah = max(0.0, ay2 - ay1)
+    bw = max(0.0, bx2 - bx1)
+    bh = max(0.0, by2 - by1)
+
+    area_a = aw * ah
+    area_b = bw * bh
+    if area_a <= 0.0 or area_b <= 0.0:
+        return 0.0
+
+    # Intersection
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
+
+    # Union
+    union = area_a + area_b - inter
+    if union <= 0.0:
+        return 0.0
+
+    return inter / union
+
+
+def get_left_v_right_answers(
+    video_path: str,
+    vlm: VLMProtocol,
+    pose_stream: Pose2DStream,
+    max_frames_num: int = 8,
+    sampling_strategy: str = "dense",
+    overlap_frames_num: int = 0,
+    sampling_fps: int = 15,
+) -> Tuple[List[List[str]], List[float], Dict[str, Any]]:
+    """
+    Arguments:
+        video_path: path to the video file
+        vlm: the vision-language model that implements VLMProtocol
+        pose_stream: the 2D pose predictor
+        max_frames_num: number of frames per chunk
+        sampling_strategy: "dense" | "uniform"
+        overlap_frames_num: number of overlapping frames between chunks (only for "dense"). Keep at 0.
+        sampling_fps: fps to sample the video at
+
+    Returns a list of list of answers (4 answers / window) and their timestamps.
+    """
+    hand_locator = HandLocator(pose_stream, vlm)
+    hand_cropper = HandCropper(
+        kp_conf_thresh=0.90, fast_movement_thresh=15, interpolation="mixed"
+    )
+    hand_locator.clear()
+    hand_cropper.clear()
+
+    start_times, answers = [], []
+    infos = {}
+
+    show_every = 10
+    from PIL import Image
+
+    for frames, start_t, end_t in load_long_video_decord(
+        video_path,
+        max_frames_num=max_frames_num,
+        sampling_strategy=sampling_strategy,
+        overlap_frames_num=overlap_frames_num,
+        sampling_fps=sampling_fps,
+        force_sample=False,
+        ret_idx=False,
+    ):
+        answer = []
+
+        if show_every > 0 and (len(answers) % show_every == 0):
+            print(f"Full image")
+            Image.fromarray(frames[0]).show()
+
+        # Order; left hand (cropped), right hand (cropped), left hand, right hand, IoU of crop boxes
+        lr_boxes = {}
+        crops_found = True
+        for handedness in ("left", "right"):
+            kp = hand_locator.process_frames(frames, handedness=handedness)
+            _, _, kp_hand = kp["wrist"], kp["elbow"], kp["hand"]
+            pose_status, boxes = hand_cropper.process_frames(frames, hand_kps=kp_hand, bbox_side=224)
+            lr_boxes[handedness] = boxes
+            if pose_status == "ABSTAIN":
+                crops_found = False
+            cropped_frames = _get_cropped(frames, boxes)
+            ans = vlm.process_frames(cropped_frames, CROPPED_PROMPT)
+            answer.append(ans)
+
+        for handedness in ("left", "right"):
+            ans = vlm.process_frames(frames, LEFT_PROMPT if handedness == "left" else RIGHT_PROMPT)
+            answer.append(ans)
+        
+        # Compute IoU of crop boxes
+        ious = []
+        for box_l, box_r in zip(lr_boxes["left"], lr_boxes["right"]):
+            x1_l, y1_l, x2_l, y2_l = box_l
+            x1_r, y1_r, x2_r, y2_r = box_r
+            iou = compute_iou((x1_l, y1_l, x2_l, y2_l), (x1_r, y1_r, x2_r, y2_r))
+            ious.append(iou)
+        avg_iou = float(np.mean(ious))
+        if not crops_found:
+            iou_signal = "N/A"
         else:
-            which_object = "None"
+            iou_signal = f"{avg_iou:.4f}"
+        answer.append(iou_signal)
 
-        print(f"Which object: {which_object} out of {target_objects}")
-        self._target_object = which_object if "none" not in which_object.lower() else ""
+        start_times.append(start_t)
+        answers.append(answer)
 
-        return [release for _ in range(T)], [grasp for _ in range(T)], [which_object for _ in range(T)]
+        eval_logger.info(f"{start_t:.2f}-{end_t:.2f}s | Ans: {answer}")
+        print(f"{start_t:.2f}-{end_t:.2f}s | Ans: {answer}")
+    
+    return answers, start_times

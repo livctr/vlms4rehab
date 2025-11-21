@@ -1,7 +1,7 @@
 from typing import List, Optional, Tuple, Union
 
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+# import os
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
 import decord
 import numpy as np
@@ -13,7 +13,10 @@ from transformers import (
     AutoProcessor,
     AutoTokenizer,
     Qwen2_5_VLForConditionalGeneration,
+    logging
 )
+logging.set_verbosity_error()
+
 import hashlib
 import pickle
 from pathlib import Path
@@ -37,7 +40,7 @@ class Qwen2_5_VL_VQA:
         device: Optional[str] = "cuda",
         device_map: Optional[str] = None,
         batch_size: Optional[Union[int, str]] = 1,
-        use_cache=False,
+        use_cache=True,
         use_flash_attention_2: Optional[bool] = False,
         min_pixels: int = 256 * 28 * 28,
         max_pixels: int = 1605632,
@@ -231,10 +234,10 @@ class Qwen2_5_VL_VQA:
         inputs = inputs.to(self._input_device)
         return inputs
 
-    def process_frames(self, frames_rgb: List[np.ndarray] | np.ndarray, context: str, max_new_tokens: int = 256):
+    def process_frames(self, frames_rgb: List[np.ndarray] | np.ndarray, prompt: str, max_new_tokens: int = 256):
 
         if self.use_cache:
-            key = self._hash_input(frames_rgb, context)
+            key = self._hash_input(frames_rgb, prompt)
             if key in self._cache:
                 return self._cache[key]
             disk_val = self._load_from_disk_cache(key)
@@ -243,7 +246,7 @@ class Qwen2_5_VL_VQA:
                 return disk_val
 
         pil_frames = self.build_pil_frames(frames_rgb)
-        inputs = self.build_input_ids(context, pil_frames)
+        inputs = self.build_input_ids(prompt, pil_frames)
 
         with torch.inference_mode():
             # Generate deterministically

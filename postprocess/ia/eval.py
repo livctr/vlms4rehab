@@ -213,6 +213,10 @@ def _extract_answers(
 
                 blocks = _parse_filtered_resps(rec["filtered_resps"])
                 if any(len(b) != len(qids_line) for b in blocks):
+                    # Which one not equal?
+                    for b in blocks:
+                        if len(b) != len(qids_line):
+                            print(f"Block {b} has length {len(b)}, expected {len(qids_line)}")
                     raise ValueError(
                         f"Answer/QID mismatch for patient={patient} (block length != qids length)."
                     )
