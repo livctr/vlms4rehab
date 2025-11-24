@@ -1,5 +1,5 @@
 checkpoint/
-logs/
+/logs*/
 media/
 nbs/
 results/

@@ -306,7 +306,7 @@ class Qwen2_5_VL(lmms):
                 outputs.append((video_window_outputs, start_time_s, end_time_s))
             
             outputs_print = "\n".join([f"{out[0]} ({out[1]}s - {out[2]}s)" for out in outputs])
-            eval_logger.debug(f"Prediction: {outputs_print}")
+            eval_logger.debug(f"Prediction ({batched_visuals[0][0]}): {outputs_print}")
             res.append(outputs)  # Assumed batch size of 1 up in the beginning
             pbar.update(1)
 

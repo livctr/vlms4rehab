@@ -69,7 +69,7 @@ def load_long_video_decord(video_path, max_frames_num, sampling_strategy, overla
         yield ret_fn(frame_idx), round(0.0, 3), round(len(vr) / video_fps, 3)
     elif sampling_strategy == "dense":
 
-        eval_logger.debug(f"Video FPS: {video_fps}, Desired Sampling FPS: {sampling_fps}, Achieved Sampling FPS: {float(video_fps) / sampling_rate}")
+        eval_logger.debug(f"Video FPS: {video_fps}, Desired Sampling FPS: {sampling_fps}, Achieved Sampling FPS: {float(video_fps) / sampling_rate}, Video = {video_path}")
 
         for indices, start_idx, end_idx in frame_chunks(
             total_frame_num,

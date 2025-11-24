@@ -376,11 +376,19 @@ class ProcessingNode(ABC):
     of arguments and can return any type of output.
     """
 
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
+    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, handedness: str, do_crop: bool = True):
         self.ctx = ctx
         self.vlm = vlm
-        self.fmt = fmt  # formatting kwargs for prompts (e.g., held_object)
-    
+        self.handedness = handedness
+        if do_crop:
+            self.fmt = {"the_hand": "the hand"}
+        else:
+            self.fmt = {"the_hand": f"the patient's {handedness} hand"}
+
+        # do_crop should curate the input frames (by cropping), the conditionals within each
+        # node, and the prompts themselves accordingly.
+        self.do_crop = do_crop
+
     def _query_vlm(
         self,
         orig_frames: np.ndarray,
@@ -393,10 +401,13 @@ class ProcessingNode(ABC):
         resolution and a formatted prompt.
         """
         prompt = prompt.format(**fmt)
-        cropped_frames = _get_cropped(frames=orig_frames, bboxes=bboxes)
-        return self.vlm.process_frames(cropped_frames, prompt)
+        if self.do_crop:
+            frames = _get_cropped(frames=orig_frames, bboxes=bboxes)
+        else:
+            frames = orig_frames
+        return self.vlm.process_frames(frames, prompt)
 
-    def run(
+    def _run(
         self,
         pose_status: str,
         frames: np.ndarray,
@@ -409,6 +420,21 @@ class ProcessingNode(ABC):
         """
         ...
 
+    def run(
+        self,
+        pose_status: str,
+        frames: np.ndarray,
+        bboxes: List[Tuple[int, int, int, int]],
+    ) -> Tuple[bool | str | int, Dict[str, Any]]:
+        """
+        Execute this node:
+        Returns: (cur_state, info) where cur_state is this node's decision/output
+            and info is a dictionary of related decision-making information.
+        """
+        if not self.do_crop and pose_status in (HandStateStatus.ABSTAIN, HandStateStatus.FAST_MOVEMENT):
+            pose_status = HandStateStatus.OK  # ignore pose status if not cropping
+        return self._run(pose_status, frames, bboxes)
+
 
 class MotionProcessingNode(ProcessingNode):
     """
@@ -416,18 +442,15 @@ class MotionProcessingNode(ProcessingNode):
     state.
     """
     IDLE_PROMPT = (
-        "Is the hand idle in this video clip? \n"
+        "Is {the_hand} idle in this video clip? \n"
         "(Idle) Visibly resting on the black mat, not moving, and not interacting with a cylindrical block. "
         "(Active) In the air, moving towards an object, moving away from an object, interacting with a "
         "cylindrical block, or 'resting' on a cylindrical block. The hand can be moving very slowly through the air and still "
         "be considered 'active.'"
-        "Answer 'Yes.' if the hand is idle; answer 'No.' otherwise.\n"
+        "Answer 'Yes.' if {the_hand} is idle; answer 'No.' otherwise.\n"
     )
 
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
-        super().__init__(ctx, vlm, **fmt)
-
-    def run(
+    def _run(
         self,
         pose_status: str,
         frames: np.ndarray,
@@ -451,20 +474,17 @@ class GraspProcessingNode(ProcessingNode):
     state.
     """
     GRASP_PROMPT = (
-        "This is a chunk from a video sequence. The hand in the center was not holding anything in the previous chunk. "
-        "Answer directly: 'Yes.' if the hand visibly picks up a cylindrical block in this chunk; answer 'No.' otherwise.\n"
+        "This is a chunk from a video sequence. In the previous chunk, {the_hand} was not holding anything. "
+        "Answer directly: 'Yes.' if {the_hand} visibly picks up a cylindrical block in this chunk; answer 'No.' otherwise.\n"
         "Mere contact does not count as grasping.\n"
     )
     RELEASE_PROMPT = (
-        "This is a chunk from a video sequence. In the previous chunk, the hand was holding a cylindrical block. "
-        "Answer directly: 'Yes.' if the hand puts down and releases the block; "
+        "This is a chunk from a video sequence. In the previous chunk, {the_hand} was holding a cylindrical block. "
+        "Answer directly: 'Yes.' if {the_hand} puts down and releases the block; "
         "answer 'No.' otherwise.\n"
     )
-
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
-        super().__init__(ctx, vlm, **fmt)
     
-    def run(
+    def _run(
         self,
         pose_status: str,
         frames: np.ndarray,
@@ -494,7 +514,7 @@ class InteractionProcessingNode(ProcessingNode):
     Stateless node object that *operates on *HandCtx* and returns the next interaction state
     and info related to the decision.
     """
-    def run(
+    def _run(
         self,
         pose_status: str,
         frames: np.ndarray,
@@ -517,11 +537,11 @@ class HandStateMachine:
     """
     Orchestrates the conditional prompting logic.
     """
-    def __init__(self, vlm: VLMProtocol, handedness: str):
+    def __init__(self, vlm: VLMProtocol, handedness: str, do_crop: bool = True):
         self.ctx = HandCtx(handedness=handedness)
-        self.motion_node = MotionProcessingNode(self.ctx, vlm, handedness=handedness)
-        self.grasp_node = GraspProcessingNode(self.ctx, vlm, handedness=handedness)
-        self.i_node = InteractionProcessingNode(self.ctx, vlm, handedness=handedness)
+        self.motion_node = MotionProcessingNode(self.ctx, vlm, handedness=handedness, do_crop=do_crop)
+        self.grasp_node = GraspProcessingNode(self.ctx, vlm, handedness=handedness, do_crop=do_crop)
+        self.i_node = InteractionProcessingNode(self.ctx, vlm, handedness=handedness, do_crop=do_crop)
 
     def step(
         self, chunk: VideoChunk
@@ -598,7 +618,8 @@ def predict_with_state_machine(
     sampling_strategy: str = "dense",
     overlap_frames_num: int = 0,
     sampling_fps: int = 15,
-    cropping: bool = True,
+    do_crop: bool = True,
+    do_postprocess: bool = True,
 ) -> Tuple[List[str], List[float], Dict[str, Any]]:
     """
     Arguments:
@@ -610,11 +631,13 @@ def predict_with_state_machine(
         sampling_strategy: "dense" | "uniform"
         overlap_frames_num: number of overlapping frames between chunks (only for "dense"). Keep at 0.
         sampling_fps: fps to sample the video at
-        cropping: whether to use hand-centric cropping
+        do_crop: whether to use hand-centric cropping
+        do_postprocess: whether to post-process the raw predictions
 
     Returns a list of primitives (one per frame), their timestamps, and detailed info.
     """
-    machine = HandStateMachine(vlm, handedness)
+    machine = HandStateMachine(vlm, handedness, do_crop=do_crop)
+    assert 1 == 0, "TODO: modify crop. "
     hand_locator = HandLocator(pose_stream, vlm, hand_wrist_elbow_ratio=0.75)
     hand_cropper = HandCropper()
     hand_locator.clear()
@@ -636,14 +659,11 @@ def predict_with_state_machine(
         kp = hand_locator.process_frames(frames, handedness=handedness)
         kp_wrist, kp_elbow, kp_hand = kp["wrist"], kp["elbow"], kp["hand"]
         pose_status, boxes = hand_cropper.process_frames(frames, hand_kps=kp_hand, bbox_side=224)
-        if not cropping:
-            box = (0, 0, frames.shape[2], frames.shape[1])
-            boxes = [box for _ in range(num_frames)]
 
         chunk = VideoChunk(
             pose_status=pose_status,
             frames=frames,
-            bboxes=boxes,
+            bboxes=boxes,  # Can use or ignore
             start_t=start_t,
             end_t=end_t
         )
@@ -672,13 +692,24 @@ def predict_with_state_machine(
             f"{start_t:.2f}-{end_t:.2f}s | Pose: {pose_status} | Ans: {prim} | Idle: {info['idle_info']}"
         )
 
-        # if end_t > 30.:
-            # break  # for faster testing
-    
     raw_prims = infos.pop("raw_prims", [])
     times = infos.pop("times", [])
     if len(raw_prims) == 0 or len(times) == 0:
         return [], [], {}
+
+    # Do simple post-processing (convert "reach" to "reposition" if ends with non-grasp primitive)
+    if not do_postprocess:
+        T = len(raw_prims)
+        grasp_ahead = False  # No "grasp" at the end
+        for i in range(T-1, -1, -1):
+            if raw_prims[i] == "transport" or raw_prims[i] == "stabilize":
+                grasp_ahead = True
+            elif raw_prims[i] == "idle":
+                grasp_ahead = False
+            elif raw_prims[i] == "reach":
+                if not grasp_ahead:
+                    raw_prims[i] = "reposition"
+        return raw_prims, times, infos
 
     idles = infos.get("idle", [])
     grasps = infos.get("grasp", [])
