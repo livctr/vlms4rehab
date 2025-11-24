@@ -12,7 +12,7 @@
 # Change to 3 GPUs for the biggest model
 
 # Example usage:
-# - `bash evaluate.sh --model pose_vlm_pipeline --task strokerehab_primitives_7`
+# - `bash evaluate.sh.example --model qwen2_5_vl_7b --task strokerehab_primitives_3`
 
 # Script credits: https://github.com/vision-x-nyu/thinking-in-space/blob/main/evaluate_all_in_one.sh
 
@@ -29,8 +29,8 @@ cd "$(pwd)"
 conda init  # in case
 
 ############################################## ARGS ##############################################
-export HF_HOME="***REMOVED***"
-export HF_TOKEN="***REMOVED***"
+export HF_HOME="FILL THIS IN!!!!!"
+export HF_TOKEN="FILL THIS IN!!!!!"
 wandb_entity = ""  # ok to leave empty
 ##################################################################################################
 
