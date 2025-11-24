@@ -12,7 +12,24 @@ import pandas as pd
 from data.utils_strokerehab import DataPaths, FM_ITEM_TO_FM_RANGE
 
 
-PATIENTS = 'C00011,S0005,S0001,S00021'
+TRAIN_PATIENTS = 'C00011,S0005,S0001,S00021'
+TEST_PATIENTS = (
+    'C00012,C00015,C00019,C00025,'
+    'S0001,S00010,S00011,S00012,S00013,'
+    'S00016,S00017,S00018,S00019,S0002,'
+    'S00020,S00021,S00023,S00026,S00028,'
+    'S00029,S0003,S00031,S00034,S0004,'
+    'S0005,S0006,S0007,S0008,S0009'
+)
+
+# TEST_PATIENTS = (
+#     'C00015,C00019,C00025,'
+#     'S0007,S0009,S00010,S00012,'
+#     'S0003,S0004,S00011,S00018,'
+#     'S00021,S00029,S00031,S00034'
+# )
+PATIENTS = TEST_PATIENTS  # TEST_PATIENTS  # change to TEST_PATIENTS for test set
+
 USE_VIEW = 'question_view'
 IA_VIDEO_QUESTIONS = None
 
@@ -232,7 +249,7 @@ sr_ia_process_results1 = partial(sr_ia_process_results, questions_path=DataPaths
 # Method 2: individual
 # - Load the right videos
 load_sria2_3_30 = partial(
-    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='13',  # 3-17,19-30
+    load_strokerehab_ia_dataset, patients=PATIENTS, fm_items='3-17,19-30',
     metadata_path=DataPaths.IA_VIDEO_METADATA_PATH2,
     filter_by=USE_VIEW
 )
@@ -284,7 +301,7 @@ if __name__ == "__main__":
     for row in ds['test']:
         video_path = os.path.join(DataPaths.IA_CLIPPED_VIDEO_DIR, row['path_v'])
         # Save to "examples/"
-        examples_dir = "examples/"
-        os.makedirs(examples_dir, exist_ok=True)
-        shutil.copy(video_path, examples_dir)
+        # examples_dir = "examples/"
+        # os.makedirs(examples_dir, exist_ok=True)
+        # shutil.copy(video_path, examples_dir)
         print(video_path)

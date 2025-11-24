@@ -13,7 +13,7 @@
 
 # Example usage:
 # - `bash evaluate.sh --model pose_vlm_pipeline --task strokerehab_primitives_7`
-`
+
 # Script credits: https://github.com/vision-x-nyu/thinking-in-space/blob/main/evaluate_all_in_one.sh
 
 

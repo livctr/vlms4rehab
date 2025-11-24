@@ -94,7 +94,7 @@ gemini = [
     "google-generativeai",
 ]
 qwen = [
-    "qwen_vl_utils",
+    "qwen_vl_utils==0.0.11",  # Versioning 0.0.11 is important b/c this doesn't auto-cap max pixels
 ]
 all = [
     "metrics",

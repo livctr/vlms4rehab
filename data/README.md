@@ -26,3 +26,6 @@
 - Then, we annotate.
 - `validate_annotations.py`: run this file to ensure the `fm_item_clips.csv` file is sensible.
 - `extract_clips.py`: run this file to cut the .mp4 FM videos into clips.
+
+### rs: Functional Primitives for RTT-Shelf
+- `best_views.txt`: manually selected stream for VLM inference

@@ -1,0 +1,22 @@
+1, Bicep reflexes
+2, Tricep reflexes
+3-8, Flexor synergy
+9-11, Extensor synergy
+12, Hand to lumbar spine
+13, Shoulder flexion 0 -> 90
+14, Forearm pronation - supination
+15, Shoulder abduction 0 -> 90
+16, Shoulder flexion 90 -> 180
+17, Forearm pronation-supination
+19, Wrist stability (elbow 90)
+20, Wrist range of motion (elbow 90)
+21, Wrist stability (elbow 0)
+22, Wrist range of motion (elbow 0)
+23, Wrist circumduction (elbow 0)
+24-25, Finger mass flexion & extension
+26, Hook grasp
+27, Thumb adduction
+28, Pincer grasp
+29, Cylindrical grasp
+30, Spherical grasp
+31-33, Coordination & speed

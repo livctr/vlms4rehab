@@ -50,9 +50,9 @@ class Qwen2_5_VL_SignalGenerator(lmms):
         use_flash_attention_2: Optional[bool] = False,
         min_pixels: int = 256 * 28 * 28,
         max_pixels: int = 1605632,
-        max_frames_num: int = 32,
-        sampling_strategy: str = "uniform",
-        sampling_fps: int = 8,
+        max_frames_num: int = 8,
+        sampling_strategy: str = "dense",
+        sampling_fps: int = 15,
         overlap_frames_num: int = 0,
         do_crop: bool = True,
         do_conditional_prompting: bool = True,
@@ -236,7 +236,7 @@ class Qwen2_5_VL_SignalGenerator(lmms):
             # GIVEN
             video_path = doc_to_visual(self.task_dict[task][split][doc_id])[0]
             # 'hand' is either 'LEFT' or 'RIGHT' for the hand that has the ground truth.
-            hand = re.search(r'\b(LEFT|RIGHT)\b(?=\s+hand)', context, re.IGNORECASE).group(1).lower()
+            hand = re.search(r'\b(LEFT|RIGHT)\b(?=\s+hand)', context, re.IGNORECASE).group(1).upper()
 
             # METHOD
             prims, times, _ = predict_with_state_machine(
@@ -245,7 +245,7 @@ class Qwen2_5_VL_SignalGenerator(lmms):
                 sampling_strategy=self.sampling_strategy,
                 sampling_fps=self.sampling_fps,
                 conditional_prompting=self.do_conditional_prompting,
-                do_crop=self.do_crop,
+                cropping=self.do_crop,
             )
 
             # Add one more timestamp

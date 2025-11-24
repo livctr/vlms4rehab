@@ -382,232 +382,94 @@ def _get_cropped(
     return np.stack(cropped_frames, axis=0)
 
 
-class ProcessingNode(ABC):
-    """
-    Abstract class for a stateless node object that *operates on* HandCtx
-    and returns processed information. The `run` method takes in a fixed set 
-    of arguments and can return any type of output.
-    """
-
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, **fmt):
-        self.ctx = ctx
-        self.vlm = vlm
-        self.fmt = fmt  # formatting kwargs for prompts (e.g., held_object)
-    
-    def _query_vlm(
-        self,
-        orig_frames: np.ndarray,
-        bboxes: List[Tuple[int, int, int, int]],
-        prompt: str,
-        **fmt
-    ) -> str:
-        """
-        Query the VLM with cropped frames whose size is dependent on the
-        resolution and a formatted prompt.
-        """
-        prompt = prompt.format(**fmt)
-        cropped_frames = _get_cropped(frames=orig_frames, bboxes=bboxes)
-        return self.vlm.process_frames(cropped_frames, prompt)
-
-    def run(
-        self,
-        pose_status: str,
-        frames: np.ndarray,
-        bboxes: List[Tuple[int, int, int, int]],
-    ) -> Tuple[bool | str | int, Dict[str, Any]]:
-        """
-        Execute this node:
-        Returns: (cur_state, info) where cur_state is this node's decision/output
-            and info is a dictionary of related decision-making information.
-        """
-        ...
-
-
-class MotionProcessingNode(ProcessingNode):
-    """
-    Stateless node object that *operates on* HandContactCtx and returns the next motion
-    state.
-    """
-    MOTION_PROMPT = (
-        "Focus on the {referred_hand}. Is it actively moving an object, moving towards "
-        "an object, or moving away from an object? Answer YES or NO."
-    )
-
-    PREV_STILL_PROMPT = (
-        "Focus on the {referred_hand}. It was previously still. Is it now actively moving "
-        "an object, moving towards an object, or moving away from an object? Answer YES or NO."
-    )
-
-    PREV_MOVING_PROMPT = (
-        "Focus on the {referred_hand}. It was previously moving an object or moving "
-        "toward/away from one. Is it now still? Answer YES or NO."
-    )
-
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, handedness: str, conditional: bool = True):
-        super().__init__(ctx, vlm)
-        self.hand_references = [
-            "hand in the center",
-            "patient's {} hand".format(handedness)
-        ]
-        self.conditional = conditional
-
-    def run(
-        self,
-        pose_status: str,
-        frames: np.ndarray,
-        bboxes: List[Tuple[int, int, int, int]],
-    ) -> Tuple[str, Dict[str, Any]]:
-        referred_hand = self.hand_references[1 if pose_status == HandStateStatus.ABSTAIN else 0]
-        fmt = {**self.fmt, "referred_hand": referred_hand}
-
-        if not self.conditional:
-            ans = self._query_vlm(frames, bboxes, self.MOTION_PROMPT, **fmt).lower()
-            if "yes" in ans:
-                return MovingState.MOVING, {"method": "MPN [uncond]", "result": f"Ans: {ans}"}
-            else:
-                return MovingState.STATIONARY, {"method": "MPN [uncond]", "result": f"Ans: {ans}"}
-        # Conditional prompting
-        if self.ctx.moving_status == MovingState.STATIONARY:
-            ans = self._query_vlm(frames, bboxes, self.PREV_STILL_PROMPT, **fmt).lower()
-            if "yes" in ans:
-                return MovingState.MOVING, {"method": "MPN [prev still]", "result": f"Ans: {ans}"}
-            else:
-                return MovingState.STATIONARY, {"method": "MPN [prev still]", "result": f"Ans: {ans}"}
-        else:
-            ans = self._query_vlm(frames, bboxes, self.PREV_MOVING_PROMPT, **fmt).lower()
-            if "yes" in ans:
-                return MovingState.STATIONARY, {"method": "MPN [prev moving]", "result": f"Ans: {ans}"}
-            else:
-                return MovingState.MOVING, {"method": "MPN [prev moving]", "result": f"Ans: {ans}"}
-
-
-class GraspProcessingNode(ProcessingNode):
-    """
-    Stateless node object that *operates on* HandContactCtx and returns the next contact
-    state.
-    """
-    GRASP_PROMPT = (
-        "Focus on the {referred_hand}. Is it actively grasping or holding an object? Answer YES or NO."
-    )
-
-    PREV_GRASP_PROMPT = (
-        "Focus on the {referred_hand}. Previously, it was actively grasping an object. "
-        "Does it release the object in this clip? Answer YES or NO directly."
-    )
-
-    PREV_EMPTY_PROMPT = (
-        "Focus on the {referred_hand}. Previously, the hand was empty. Does it "
-        "grasp an object in this clip? Answer YES or NO directly."
-    )
-
-    def __init__(self, ctx: HandCtx, vlm: VLMProtocol, handedness: str, conditional: bool = True):
-        super().__init__(ctx, vlm)
-        self.hand_references = [
-            "hand in the center",
-            "patient's {} hand".format(handedness)
-        ]
-        self.conditional = conditional
-    
-    def run(
-        self,
-        pose_status: str,
-        frames: np.ndarray,
-        bboxes: List[Tuple[int, int, int, int]],
-    ) -> Tuple[str, Dict[str, Any]]:
-        referred_hand = self.hand_references[1 if pose_status == HandStateStatus.ABSTAIN else 0]
-        fmt = {**self.fmt, "referred_hand": referred_hand}
-
-        if not self.conditional:
-            ans = self._query_vlm(frames, bboxes, self.GRASP_PROMPT, **fmt).lower()
-            if "yes" in ans:
-                return GraspState.HOLDING, {"method": "GRP [uncond]", "result": f"Ans: {ans}"}
-            else:
-                return GraspState.EMPTY, {"method": "GRP [uncond]", "result": f"Ans: {ans}"}
-        # Conditional prompting
-        if self.ctx.grasp_status == GraspState.EMPTY:
-            ans = self._query_vlm(frames, bboxes, self.PREV_EMPTY_PROMPT, **fmt).lower()
-            if "yes" in ans:
-                return GraspState.HOLDING, {"method": "GRP [prev empty]", "result": f"Ans: {ans}"}
-            else:
-                return GraspState.EMPTY, {"method": "GRP [prev empty]", "result": f"Ans: {ans}"}
-        else:
-            ans = self._query_vlm(frames, bboxes, self.PREV_GRASP_PROMPT, **fmt).lower()
-            if "yes" in ans:
-                return GraspState.EMPTY, {"method": "GRP [prev grasp]", "result": f"Ans: {ans}"}
-            else:
-                return GraspState.HOLDING, {"method": "GRP [prev grasp]", "result": f"Ans: {ans}"}
-
 
 ####################################### ORCHESTRATION SECTION #######################################
 
+LEFT_PROMPT = (
+    "Focus on the patient's LEFT hand. Do not mention or consider the other hand in any way. "
+    "Based on the movement and posture of the patient's LEFT hand, is the LEFT hand moving or "
+    "moving an object? Answer 'Yes.' or 'No.' directly.\n\n"
+)
 
-class HandStateMachine:
+RIGHT_PROMPT = (
+    "Focus on the patient's RIGHT hand. Do not mention or consider the other hand in any way. "
+    "Based on the movement and posture of the patient's RIGHT hand, is the RIGHT hand moving or "
+    "moving an object? Answer 'Yes.' or 'No.' directly.\n\n"
+)
+
+CROPPED_PROMPT = (
+    "Based on the movement and posture of the hand, is the hand in the center moving or "
+    "moving an object? Answer 'Yes.' or 'No.' directly.\n\n"
+)
+
+
+def compute_iou(box_a: Tuple[float, float, float, float],
+                box_b: Tuple[float, float, float, float]) -> float:
     """
-    Orchestrates the conditional prompting logic.
+    Compute Intersection-over-Union (IoU) for two axis-aligned boxes.
+
+    Boxes are (x1, y1, x2, y2). If coordinates are swapped (x2 < x1 or y2 < y1),
+    they will be normalized. Returns 0.0 for invalid/zero-area boxes or no overlap.
     """
-    def __init__(self, vlm: VLMProtocol, handedness: str, conditional: bool = True):
-        self.ctx = HandCtx(handedness=handedness)
-        self.motion_node = MotionProcessingNode(self.ctx, vlm, conditional=conditional, handedness=handedness)
-        self.grasp_node = GraspProcessingNode(self.ctx, vlm, conditional=conditional, handedness=handedness)
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
 
-    def step(
-        self, chunk: VideoChunk
-    ) -> Tuple[str, List[bool], Optional[str], Dict[str, Any]]:
+    # Normalize corners (handle swapped inputs)
+    ax1, ax2 = min(ax1, ax2), max(ax1, ax2)
+    ay1, ay2 = min(ay1, ay2), max(ay1, ay2)
+    bx1, bx2 = min(bx1, bx2), max(bx1, bx2)
+    by1, by2 = min(by1, by2), max(by1, by2)
 
-        motion, motion_info = self.motion_node.run(
-            chunk.pose_status, chunk.frames, chunk.bboxes
-        )
-        self.ctx.moving_status = motion
+    # Areas
+    aw = max(0.0, ax2 - ax1)
+    ah = max(0.0, ay2 - ay1)
+    bw = max(0.0, bx2 - bx1)
+    bh = max(0.0, by2 - by1)
 
-        grasp, grasp_info = self.grasp_node.run(
-            chunk.pose_status, chunk.frames, chunk.bboxes
-        )
-        self.ctx.grasp_status = grasp
+    area_a = aw * ah
+    area_b = bw * bh
+    if area_a <= 0.0 or area_b <= 0.0:
+        return 0.0
 
-        self.ctx.pose_status = chunk.pose_status
+    # Intersection
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
 
-        moving = "Yes" if self.ctx.moving_status == MovingState.MOVING else "No"
-        holding = "Yes" if self.ctx.grasp_status == GraspState.HOLDING else "No"
-        s = f"{moving} <SEP> {holding}"
-        info = {
-            "motion_info": motion_info,
-            "grasp_info": grasp_info,
-        }
-        return s, info
+    iw = max(0.0, ix2 - ix1)
+    ih = max(0.0, iy2 - iy1)
+    inter = iw * ih
 
-    @property
-    def context(self) -> HandCtx:
-        return self.ctx
+    # Union
+    union = area_a + area_b - inter
+    if union <= 0.0:
+        return 0.0
+
+    return inter / union
 
 
-def predict_with_state_machine(
+def get_left_v_right_answers(
     video_path: str,
-    handedness: str,
     vlm: VLMProtocol,
     pose_stream: Pose2DStream,
     max_frames_num: int = 8,
     sampling_strategy: str = "dense",
     overlap_frames_num: int = 0,
     sampling_fps: int = 15,
-    conditional_prompting: bool = True,
-    cropping: bool = True,
-) -> Tuple[List[str], List[float], Dict[str, Any]]:
+) -> Tuple[List[List[str]], List[float], Dict[str, Any]]:
     """
     Arguments:
         video_path: path to the video file
-        handedness: "left" | "right", which hand to track
         vlm: the vision-language model that implements VLMProtocol
         pose_stream: the 2D pose predictor
         max_frames_num: number of frames per chunk
         sampling_strategy: "dense" | "uniform"
         overlap_frames_num: number of overlapping frames between chunks (only for "dense"). Keep at 0.
         sampling_fps: fps to sample the video at
-        conditional_prompting: whether to use conditional prompting in the state machine
-        cropping: whether to use hand-centric cropping
 
-    Returns a list of primitives (one per frame), their timestamps, and detailed info.
+    Returns a list of list of answers (4 answers / window) and their timestamps.
     """
-    machine = HandStateMachine(vlm, handedness, conditional=conditional_prompting)
     hand_locator = HandLocator(pose_stream, vlm)
     hand_cropper = HandCropper(
         kp_conf_thresh=0.90, fast_movement_thresh=15, interpolation="mixed"
@@ -618,6 +480,9 @@ def predict_with_state_machine(
     start_times, answers = [], []
     infos = {}
 
+    show_every = 10
+    from PIL import Image
+
     for frames, start_t, end_t in load_long_video_decord(
         video_path,
         max_frames_num=max_frames_num,
@@ -627,57 +492,48 @@ def predict_with_state_machine(
         force_sample=False,
         ret_idx=False,
     ):
-        num_frames = len(frames)
+        answer = []
 
-        # Run the pose model always to get pose_status. Change boxes if not cropping.
-        kp = hand_locator.process_frames(frames, handedness=handedness)
-        kp_wrist, kp_elbow, kp_hand = kp["wrist"], kp["elbow"], kp["hand"]
-        if cropping:
+        if show_every > 0 and (len(answers) % show_every == 0):
+            print(f"Full image")
+            Image.fromarray(frames[0]).show()
+
+        # Order; left hand (cropped), right hand (cropped), left hand, right hand, IoU of crop boxes
+        lr_boxes = {}
+        crops_found = True
+        for handedness in ("left", "right"):
+            kp = hand_locator.process_frames(frames, handedness=handedness)
+            _, _, kp_hand = kp["wrist"], kp["elbow"], kp["hand"]
             pose_status, boxes = hand_cropper.process_frames(frames, hand_kps=kp_hand, bbox_side=224)
-        else:
-            box = (0, 0, frames.shape[2], frames.shape[1])
-            pose_status = HandStateStatus.ABSTAIN
-            boxes = [box for _ in range(num_frames)]
+            lr_boxes[handedness] = boxes
+            if pose_status == "ABSTAIN":
+                crops_found = False
+            cropped_frames = _get_cropped(frames, boxes)
+            ans = vlm.process_frames(cropped_frames, CROPPED_PROMPT)
+            answer.append(ans)
 
-        chunk = VideoChunk(
-            pose_status=pose_status,
-            frames=frames,
-            bboxes=boxes,
-            start_t=start_t,
-            end_t=end_t
-        )
-        ans, info = machine.step(chunk)
+        for handedness in ("left", "right"):
+            ans = vlm.process_frames(frames, LEFT_PROMPT if handedness == "left" else RIGHT_PROMPT)
+            answer.append(ans)
+        
+        # Compute IoU of crop boxes
+        ious = []
+        for box_l, box_r in zip(lr_boxes["left"], lr_boxes["right"]):
+            x1_l, y1_l, x2_l, y2_l = box_l
+            x1_r, y1_r, x2_r, y2_r = box_r
+            iou = compute_iou((x1_l, y1_l, x2_l, y2_l), (x1_r, y1_r, x2_r, y2_r))
+            ious.append(iou)
+        avg_iou = float(np.mean(ious))
+        if not crops_found:
+            iou_signal = "N/A"
+        else:
+            iou_signal = f"{avg_iou:.4f}"
+        answer.append(iou_signal)
 
         start_times.append(start_t)
-        answers.append(ans)
+        answers.append(answer)
 
-        # Infos
-        info["times"] = np.linspace(start_t, end_t, num_frames, endpoint=False).tolist()
-        info["pose_status"] = [pose_status] * num_frames
-        info["answer"] = [ans] * num_frames
-        info["kps_wrist"] = [kp_wrist[i] for i in range(num_frames)]
-        info["kps_elbow"] = [kp_elbow[i] for i in range(num_frames)]
-        info["kps_hand"] = [kp_hand[i] for i in range(num_frames)]
-        info["bboxes"] = [boxes[i] for i in range(num_frames)]
-        for key in info:
-            if key not in infos:
-                infos[key] = []
-            if type(info[key]) is list:
-                infos[key].extend(info[key])
-            else:
-                infos[key].extend([info[key]] * num_frames)
-        
-        eval_logger.info(
-            f"{start_t:.2f}-{end_t:.2f}s | Pose: {pose_status} | Ans: {ans}"
-        )
-        print(
-            f"{start_t:.2f}-{end_t:.2f}s | Pose: {pose_status} | Ans: {ans}"
-        )
-
-    if len(answers) == 0:
-        return [], [], {}
-
-    start_times.append(end_t)  # for the conversion API
-    # Ensure consistency with SMC processing
-    primitives, _ = _convert_motion_contact_to_primitives(answers, start_times)
-    return primitives, start_times, infos
+        eval_logger.info(f"{start_t:.2f}-{end_t:.2f}s | Ans: {answer}")
+        print(f"{start_t:.2f}-{end_t:.2f}s | Ans: {answer}")
+    
+    return answers, start_times
