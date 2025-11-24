@@ -7,7 +7,7 @@ else
     yes_flag=""
 fi
 
-# This script creates the conda environments `cvfm4rehab_llava`, `cvfm4rehab_vila`, and `cvfm4rehab_longva`.
+# This script creates the conda environments `cvfm4rehab`, `cvfm4rehab_llava`, `cvfm4rehab_vila`, and `cvfm4rehab_longva`.
 
 deactivate_all_conda_envs() {
   while [[ -n "$CONDA_DEFAULT_ENV" ]]; do
