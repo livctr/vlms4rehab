@@ -201,7 +201,14 @@ class HandLocator:
             self._person_detected = True
             prompt = person_locating_prompt if person_locating_prompt is not None else self.LOCATE_PROMPT
             patient_loc_text = self.vqa_model.process_frames(frames[0], prompt)
-            bbox, label = _extract_largest_bbox_and_label(patient_loc_text)
+            try:
+                bbox, label = _extract_largest_bbox_and_label(patient_loc_text)
+            except (ValueError, KeyError, json.JSONDecodeError):
+                eval_logger.warning(
+                    f"Patient localization failed (response: {patient_loc_text!r}). "
+                    f"Falling back to full-frame bbox."
+                )
+                bbox, label = (0.0, 0.0, float(W), float(H)), None
             self.stream.add_new_person_to_track(bbox=bbox, label=label)
 
         # Ensure we get the right elbow/wrist keypoints

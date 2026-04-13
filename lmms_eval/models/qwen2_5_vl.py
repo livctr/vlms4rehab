@@ -242,6 +242,8 @@ class Qwen2_5_VL(lmms):
                 text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
                 # video_inputs is 1092x700
                 image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+                if isinstance(video_kwargs.get("fps"), list):
+                    video_kwargs["fps"] = video_kwargs["fps"][0]
                 inputs = self.processor(
                     text=text,
                     images=image_inputs,
@@ -280,8 +282,8 @@ class Qwen2_5_VL(lmms):
                 for i, inputs in enumerate(built_inputs):
                     with torch.inference_mode():
                         # Get logits for next token prediction
-                        outputs = self.model(**inputs)
-                        logits = outputs.logits[:, -1, :]  # Get logits for last position
+                        model_outputs = self.model(**inputs)
+                        logits = model_outputs.logits[:, -1, :]  # Get logits for last position
                         
                         # Get top 10 probabilities
                         probs = torch.softmax(logits, dim=-1)
@@ -291,7 +293,7 @@ class Qwen2_5_VL(lmms):
                         top_tokens = [self.tokenizer.decode([idx.item()]) for idx in top_indices[0]]
                         top_prob_values = top_probs[0].tolist()
                         
-                        eval_logger.debug(f"Top 10 next tokens: {list(zip(top_tokens, top_prob_values))}")
+                        # eval_logger.debug(f"Top 10 next tokens: {list(zip(top_tokens, top_prob_values))}")
                         
                         # Generate normally for the actual continuation
                         cont = self.model.generate(

@@ -405,21 +405,43 @@ strokerehab_load_small_test = partial(load_strokerehab_primitives_dataset,
                                       reps=1)
 
 
-def strokerehab_load_rtt_shelf_counting_dataset(test_set=True):
+def strokerehab_load_rtt_shelf_counting_dataset(test_set=True, patients_override=None):
 
     ds = load_strokerehab_primitives_dataset(activity='RTT left side,RTT right side,shelf left side,shelf right side')
     best_views = pd.read_csv('data/rs/best_views.txt')
     df = ds['test'].to_pandas()
 
     prompt_tune_patients = "C00020,C00023,S00019"
-    test_patients = (
-        "C00022,C00024,C00025,C00028,C00029,"
-        "S00013,S00016,S00023,S00010,S00012,"
-        "S00011,S00017,S0001,S0003,S00018,"
-        "S00021,S00029,S00031,S00034,S00049"
-    )
-    patients = test_patients if test_set else prompt_tune_patients
-    df = df[df['patient'].isin(patients.split(','))]
+    # test_patients = (
+    #     "C00022,C00024,C00025,C00028,C00029,"
+    #     "S00013,S00016,S00023,S00010,S00012,"
+    #     "S00011,S00017,S0001,S0003,S00018,"
+    #     "S00021,S00029,S00031,S00034,S00049"
+    # )
+    # Override patient split either via argument or environment variable for easy job sharding.
+    # Example:
+    #   STROKEREHAB_COUNTING_PATIENTS="C00022,C00024,S00013" bash evaluate.sh ...
+    env_patients_override = os.getenv("STROKEREHAB_COUNTING_PATIENTS", "").strip()
+    if patients_override:
+        patients = patients_override
+    elif test_set:
+        prompt_tune_set = set(prompt_tune_patients.split(','))
+        patients = ",".join(p for p in df['patient'].unique() if p not in prompt_tune_set)
+    else:
+        patients = prompt_tune_patients
+    if env_patients_override:
+        patients = env_patients_override
+
+    patients_list = [p.strip() for p in str(patients).split(',') if p.strip()]
+    df = df[df['patient'].isin(patients_list)]
+
+    # Optional bad-video exclusion to avoid full-run restarts caused by known problematic files.
+    # This should be a regex over path_v entries.
+    # Example:
+    #   STROKEREHAB_COUNTING_EXCLUDE_VIDEO_REGEX="S00031/.+shelf right side"
+    exclude_video_regex = os.getenv("STROKEREHAB_COUNTING_EXCLUDE_VIDEO_REGEX", "").strip()
+    if exclude_video_regex:
+        df = df[~df['path_v'].str.contains(exclude_video_regex, regex=True)]
 
     best_views_selected = pd.merge(df, best_views, on='id', how='inner')
     df = (best_views_selected
