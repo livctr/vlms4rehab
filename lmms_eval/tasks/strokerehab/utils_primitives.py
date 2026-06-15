@@ -11,10 +11,10 @@ from Levenshtein import distance as levenshtein_distance
 
 from data.utils_strokerehab import (
     DataPaths, PrimitiveLabelUtils, resps_to_string, string_to_resps,
-    HEALTHY_PATIENTS,
-    MILD_PATIENTS,
-    MODERATE_PATIENTS,
-    SEVERE_PATIENTS,
+    HEALTHY_SUBJECTS,
+    MILD_SUBJECTS,
+    MODERATE_SUBJECTS,
+    SEVERE_SUBJECTS,
 )
 
 
@@ -390,10 +390,10 @@ strokerehab_load_dataset_3patients = partial(load_strokerehab_primitives_dataset
 strokerehab_load_dataset_onerep = partial(load_strokerehab_primitives_dataset, reps='first')
 strokerehab_load_dataset_test = partial(load_strokerehab_primitives_dataset, filter_for_testset=True)
 strokerehab_load_dataset_test_subset = partial(load_strokerehab_primitives_dataset, filter_for_subsampled_testset=True)
-strokerehab_load_dataset_healthy = partial(load_strokerehab_primitives_dataset, patients=HEALTHY_PATIENTS)
-strokerehab_load_dataset_mild = partial(load_strokerehab_primitives_dataset, patients=MILD_PATIENTS)
-strokerehab_load_dataset_moderate = partial(load_strokerehab_primitives_dataset, patients=MODERATE_PATIENTS)
-strokerehab_load_dataset_severe = partial(load_strokerehab_primitives_dataset, patients=SEVERE_PATIENTS)
+strokerehab_load_dataset_healthy = partial(load_strokerehab_primitives_dataset, patients=HEALTHY_SUBJECTS)
+strokerehab_load_dataset_mild = partial(load_strokerehab_primitives_dataset, patients=MILD_SUBJECTS)
+strokerehab_load_dataset_moderate = partial(load_strokerehab_primitives_dataset, patients=MODERATE_SUBJECTS)
+strokerehab_load_dataset_severe = partial(load_strokerehab_primitives_dataset, patients=SEVERE_SUBJECTS)
 strokerehab_load_primitives_data = partial(load_strokerehab_primitives_dataset, patients='S0001', activity='brushing,combing', reps='first')
 
 regex = r'^(C00020/C00020_glasses1_1.mkv|C00020/C00020_drinking1_1.mkv|C00020/C00020_combing1_1.mkv|C00020/C00020_face wash1_1.mkv|C00020/C00020_shelf right side1_1.mkv|C00020/C00020_deodrant1_1.mkv)$'

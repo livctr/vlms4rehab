@@ -1,0 +1,249 @@
+{
+  "results": {
+    "strokerehab_primitives_1": {
+      "alias": "strokerehab_primitives_1",
+      "id,combine-and-parse": [],
+      "id_stderr,combine-and-parse": [],
+      "is_in_strokerehab_test_set,combine-and-parse": [],
+      "is_in_strokerehab_test_set_stderr,combine-and-parse": [],
+      "path_v,combine-and-parse": [],
+      "path_v_stderr,combine-and-parse": [],
+      "patient,combine-and-parse": [],
+      "patient_stderr,combine-and-parse": [],
+      "stroke,combine-and-parse": [],
+      "stroke_stderr,combine-and-parse": [],
+      "activity,combine-and-parse": [],
+      "activity_stderr,combine-and-parse": [],
+      "fps,combine-and-parse": [],
+      "fps_stderr,combine-and-parse": [],
+      "height,combine-and-parse": [],
+      "height_stderr,combine-and-parse": [],
+      "width,combine-and-parse": [],
+      "width_stderr,combine-and-parse": [],
+      "duration_s,combine-and-parse": [],
+      "duration_s_stderr,combine-and-parse": [],
+      "path_l,combine-and-parse": [],
+      "path_l_stderr,combine-and-parse": [],
+      "nlabels,combine-and-parse": [],
+      "nlabels_stderr,combine-and-parse": [],
+      "subsampled_test_set,combine-and-parse": [],
+      "subsampled_test_set_stderr,combine-and-parse": [],
+      "__index_level_0__,combine-and-parse": [],
+      "__index_level_0___stderr,combine-and-parse": [],
+      "edit_score,combine-and-parse": 25.913311096463406,
+      "edit_score_stderr,combine-and-parse": 1.48755951882832,
+      "action_error_rate,combine-and-parse": 2.3792104603973425,
+      "action_error_rate_stderr,combine-and-parse": 0.23871404278118416,
+      "mae_reach,combine-and-parse": 32.3,
+      "mae_reach_stderr,combine-and-parse": 3.6639724176842567,
+      "count_reach,combine-and-parse": 6.16,
+      "count_reach_stderr,combine-and-parse": 0.6096904534102464,
+      "mae_reposition,combine-and-parse": 11.38,
+      "mae_reposition_stderr,combine-and-parse": 1.480730652517912,
+      "count_reposition,combine-and-parse": 5.16,
+      "count_reposition_stderr,combine-and-parse": 0.6313962499807835,
+      "mae_transport,combine-and-parse": 25.62,
+      "mae_transport_stderr,combine-and-parse": 2.9844344488683,
+      "count_transport,combine-and-parse": 9.44,
+      "count_transport_stderr,combine-and-parse": 1.160984803641165,
+      "mae_stabilize,combine-and-parse": 7.34,
+      "mae_stabilize_stderr,combine-and-parse": 0.9141115905621152,
+      "count_stabilize,combine-and-parse": 8.26,
+      "count_stabilize_stderr,combine-and-parse": 1.3064393110548183,
+      "mae_idle,combine-and-parse": 5.96,
+      "mae_idle_stderr,combine-and-parse": 0.5869047136095799,
+      "count_idle,combine-and-parse": 6.38,
+      "count_idle_stderr,combine-and-parse": 0.5978806105651829,
+      "mae_avg,combine-and-parse": 16.520000000000003,
+      "mae_avg_stderr,combine-and-parse": 1.7181765369847468,
+      "count_truth,combine-and-parse": 35.4,
+      "count_truth_stderr,combine-and-parse": 3.1188694969131854,
+      "count_pred,combine-and-parse": 97.72,
+      "count_pred_stderr,combine-and-parse": 9.5977905620757
+    }
+  },
+  "group_subtasks": {
+    "strokerehab_primitives_1": []
+  },
+  "configs": {
+    "strokerehab_primitives_1": {
+      "task": "strokerehab_primitives_1",
+      "dataset_kwargs": {
+        "use_dataset_builder": "functools.partial(<function load_strokerehab_primitives_dataset at 0x155449feb1c0>, filter_for_subsampled_testset=True)"
+      },
+      "test_split": "test",
+      "full_docs": false,
+      "process_results_use_image": false,
+      "doc_to_visual": "<function sr_primitives_doc_to_visual at 0x155449fe8550>",
+      "doc_to_text": "<function sr_primitives_doc_to_text at 0x155449fe9000>",
+      "doc_to_target": "<function sr_primitives_doc_to_target at 0x155449fe9ab0>",
+      "process_results": "<function sr_primitives_process_results at 0x155449fea560>",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "num_fewshot": 0,
+      "metric_list": [
+        {
+          "metric": "edit_score",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "action_error_rate",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_avg",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_reach",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_reposition",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_transport",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_stabilize",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_idle",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "count_truth",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_pred",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_reach",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_reposition",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_transport",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_stabilize",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_idle",
+          "aggregation": "mean"
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "max_new_tokens": 16,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "do_sample": false,
+        "until": [
+          "\n\n"
+        ]
+      },
+      "repeats": 1,
+      "filter_list": [
+        {
+          "name": "combine-and-parse",
+          "filter": [
+            {
+              "function": "<class 'utils_primitives.OutputToResultsFilter'>"
+            }
+          ]
+        }
+      ],
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 1.0
+      },
+      "lmms_eval_specific_kwargs": {
+        "prompt": "ideal",
+        "use_video_with_segmentations": false
+      }
+    }
+  },
+  "versions": {
+    "strokerehab_primitives_1": 1.0
+  },
+  "n-shot": {
+    "strokerehab_primitives_1": 0
+  },
+  "higher_is_better": {
+    "strokerehab_primitives_1": {
+      "edit_score": true,
+      "action_error_rate": false,
+      "mae_avg": false,
+      "mae_reach": false,
+      "mae_reposition": false,
+      "mae_transport": false,
+      "mae_stabilize": false,
+      "mae_idle": false,
+      "count_truth": null,
+      "count_pred": null,
+      "count_reach": null,
+      "count_reposition": null,
+      "count_transport": null,
+      "count_stabilize": null,
+      "count_idle": null
+    }
+  },
+  "n-samples": {
+    "strokerehab_primitives_1": {
+      "original": 50,
+      "effective": 50
+    }
+  },
+  "config": {
+    "model": "qwen2_5_vl",
+    "model_args": "pretrained=Qwen/Qwen2.5-VL-7B-Instruct,max_frames_num=8,sampling_strategy=dense,sampling_fps=4,overlap_frames_num=0",
+    "batch_size": "1",
+    "batch_sizes": [],
+    "device": null,
+    "use_cache": null,
+    "limit": null,
+    "bootstrap_iters": 100000,
+    "gen_kwargs": "",
+    "random_seed": 0,
+    "numpy_seed": 1234,
+    "torch_seed": 1234,
+    "fewshot_seed": 1234
+  },
+  "git_hash": "d461d11",
+  "date": "20250923_000208",
+  "task_hashes": {
+    "strokerehab_primitives_1": "1a06ba69d4c69747510ae539a3cd5df926c1272347d1b414ff60986dd242bf19"
+  },
+  "model_source": "qwen2_5_vl",
+  "model_name": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "model_name_sanitized": "Qwen__Qwen2.5-VL-7B-Instruct",
+  "system_instruction": null,
+  "system_instruction_sha": null,
+  "fewshot_as_multiturn": false,
+  "chat_template": null,
+  "chat_template_sha": null,
+  "start_time": 4327875.899959294,
+  "end_time": 4330707.848677096,
+  "total_evaluation_time_seconds": "2831.9487178018317"
+}

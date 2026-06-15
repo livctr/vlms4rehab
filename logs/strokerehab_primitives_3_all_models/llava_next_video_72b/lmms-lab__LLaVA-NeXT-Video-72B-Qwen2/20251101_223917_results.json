@@ -1,0 +1,249 @@
+{
+  "results": {
+    "strokerehab_primitives_3": {
+      "alias": "strokerehab_primitives_3",
+      "index,combine-and-parse": [],
+      "index_stderr,combine-and-parse": [],
+      "id,combine-and-parse": [],
+      "id_stderr,combine-and-parse": [],
+      "is_in_strokerehab_test_set,combine-and-parse": [],
+      "is_in_strokerehab_test_set_stderr,combine-and-parse": [],
+      "path_v,combine-and-parse": [],
+      "path_v_stderr,combine-and-parse": [],
+      "patient,combine-and-parse": [],
+      "patient_stderr,combine-and-parse": [],
+      "stroke,combine-and-parse": [],
+      "stroke_stderr,combine-and-parse": [],
+      "activity,combine-and-parse": [],
+      "activity_stderr,combine-and-parse": [],
+      "fps,combine-and-parse": [],
+      "fps_stderr,combine-and-parse": [],
+      "height,combine-and-parse": [],
+      "height_stderr,combine-and-parse": [],
+      "width,combine-and-parse": [],
+      "width_stderr,combine-and-parse": [],
+      "duration_s,combine-and-parse": [],
+      "duration_s_stderr,combine-and-parse": [],
+      "path_l,combine-and-parse": [],
+      "path_l_stderr,combine-and-parse": [],
+      "nlabels,combine-and-parse": [],
+      "nlabels_stderr,combine-and-parse": [],
+      "subsampled_test_set,combine-and-parse": [],
+      "subsampled_test_set_stderr,combine-and-parse": [],
+      "edit_score,combine-and-parse": 23.083827656664774,
+      "edit_score_stderr,combine-and-parse": 1.6501295379094791,
+      "action_error_rate,combine-and-parse": 0.7765970149900282,
+      "action_error_rate_stderr,combine-and-parse": 0.016238241511445588,
+      "mae_reach,combine-and-parse": 10.28888888888889,
+      "mae_reach_stderr,combine-and-parse": 1.0010287398165385,
+      "count_reach,combine-and-parse": 10.555555555555555,
+      "count_reach_stderr,combine-and-parse": 0.999389465447889,
+      "mae_reposition,combine-and-parse": 6.188888888888889,
+      "mae_reposition_stderr,combine-and-parse": 0.6984724628676356,
+      "count_reposition,combine-and-parse": 5.9222222222222225,
+      "count_reposition_stderr,combine-and-parse": 0.5780478097497634,
+      "mae_transport,combine-and-parse": 12.622222222222222,
+      "mae_transport_stderr,combine-and-parse": 1.1522737417707982,
+      "count_transport,combine-and-parse": 13.444444444444445,
+      "count_transport_stderr,combine-and-parse": 1.156009226223513,
+      "mae_stabilize,combine-and-parse": 8.433333333333334,
+      "mae_stabilize_stderr,combine-and-parse": 0.923550928267424,
+      "count_stabilize,combine-and-parse": 8.6,
+      "count_stabilize_stderr,combine-and-parse": 0.9309225150830973,
+      "mae_idle,combine-and-parse": 6.344444444444444,
+      "mae_idle_stderr,combine-and-parse": 0.6866228688826836,
+      "count_idle,combine-and-parse": 6.544444444444444,
+      "count_idle_stderr,combine-and-parse": 0.5544420801602834,
+      "mae_avg,combine-and-parse": 8.775555555555558,
+      "mae_avg_stderr,combine-and-parse": 0.7037394519688773,
+      "count_truth,combine-and-parse": 45.06666666666667,
+      "count_truth_stderr,combine-and-parse": 3.2526873552819344,
+      "count_pred,combine-and-parse": 20.38888888888889,
+      "count_pred_stderr,combine-and-parse": 2.0602470334434644
+    }
+  },
+  "group_subtasks": {
+    "strokerehab_primitives_3": []
+  },
+  "configs": {
+    "strokerehab_primitives_3": {
+      "task": "strokerehab_primitives_3",
+      "dataset_kwargs": {
+        "use_dataset_builder": "<function load_strokerehab_final at 0x15544db51ea0>"
+      },
+      "test_split": "test",
+      "full_docs": false,
+      "process_results_use_image": false,
+      "doc_to_visual": "<function sr_primitives_doc_to_visual at 0x15544db2af80>",
+      "doc_to_text": "<function sr_primitives_doc_to_text at 0x15544db2ba30>",
+      "doc_to_target": "<function sr_primitives_doc_to_target at 0x15544db50550>",
+      "process_results": "<function sr_primitives_process_results at 0x15544db51000>",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "num_fewshot": 0,
+      "metric_list": [
+        {
+          "metric": "edit_score",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "action_error_rate",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_avg",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_reach",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_reposition",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_transport",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_stabilize",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "mae_idle",
+          "aggregation": "mean",
+          "higher_is_better": false
+        },
+        {
+          "metric": "count_truth",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_pred",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_reach",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_reposition",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_transport",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_stabilize",
+          "aggregation": "mean"
+        },
+        {
+          "metric": "count_idle",
+          "aggregation": "mean"
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "max_new_tokens": 16,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "num_beams": 1,
+        "do_sample": false,
+        "until": [
+          "\n\n"
+        ]
+      },
+      "repeats": 1,
+      "filter_list": [
+        {
+          "name": "combine-and-parse",
+          "filter": [
+            {
+              "function": "<class 'utils_primitives.OutputToResultsFilter'>"
+            }
+          ]
+        }
+      ],
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 1.0
+      },
+      "lmms_eval_specific_kwargs": {
+        "prompt": "single_motion_and_contact",
+        "use_video_with_segmentations": false
+      }
+    }
+  },
+  "versions": {
+    "strokerehab_primitives_3": 1.0
+  },
+  "n-shot": {
+    "strokerehab_primitives_3": 0
+  },
+  "higher_is_better": {
+    "strokerehab_primitives_3": {
+      "edit_score": true,
+      "action_error_rate": false,
+      "mae_avg": false,
+      "mae_reach": false,
+      "mae_reposition": false,
+      "mae_transport": false,
+      "mae_stabilize": false,
+      "mae_idle": false,
+      "count_truth": null,
+      "count_pred": null,
+      "count_reach": null,
+      "count_reposition": null,
+      "count_transport": null,
+      "count_stabilize": null,
+      "count_idle": null
+    }
+  },
+  "n-samples": {
+    "strokerehab_primitives_3": {
+      "original": 90,
+      "effective": 90
+    }
+  },
+  "config": {
+    "model": "llava_vid",
+    "model_args": "pretrained=lmms-lab/LLaVA-NeXT-Video-72B-Qwen2,video_decode_backend=decord,conv_template=qwen_1_5,max_frames_num=8,device_map=auto,sampling_strategy=dense,sampling_fps=15,overlap_frames_num=0",
+    "batch_size": "1",
+    "batch_sizes": [],
+    "device": null,
+    "use_cache": null,
+    "limit": null,
+    "bootstrap_iters": 100000,
+    "gen_kwargs": "",
+    "random_seed": 0,
+    "numpy_seed": 1234,
+    "torch_seed": 1234,
+    "fewshot_seed": 1234
+  },
+  "git_hash": "e445cfd",
+  "date": "20251101_223917",
+  "task_hashes": {
+    "strokerehab_primitives_3": "6b90a53cacef690de73a56d7ada3ac5af8c7e7cfb16a8632bb7159fed0e37974"
+  },
+  "model_source": "llava_vid",
+  "model_name": "lmms-lab/LLaVA-NeXT-Video-72B-Qwen2",
+  "model_name_sanitized": "lmms-lab__LLaVA-NeXT-Video-72B-Qwen2",
+  "system_instruction": null,
+  "system_instruction_sha": null,
+  "fewshot_as_multiturn": false,
+  "chat_template": null,
+  "chat_template_sha": null,
+  "start_time": 1117794.06202901,
+  "end_time": 1139971.800793692,
+  "total_evaluation_time_seconds": "22177.738764682086"
+}
